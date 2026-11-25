@@ -49,11 +49,19 @@ void ygo_premios_set(int i) { InterlockedExchange(&s_on, i == 0); }
 int ygo_quien_get(void);
 static int ayudas(void) { (void)s_on; return ygo_quien_get() != 2; }
 
-/* a guest pointer the port may read: the low RAM (heap, image) or the
- * contiguous memory the kit maps at 0x80000000 (128 MB at most) */
-int ygo_ram_ok(uint32_t a)
+/* a guest pointer the port may read, as its address in the base 64 MB, 0
+ * when it is none. 2026-11-25 (the user: no gods' sign after a tournament,
+ * twice; [COFRE] dios elegido: grupo 99 with 0x80000000 already allowed):
+ * the kit maps the 64 MB of RAM again every 64 MB up to the contiguous
+ * window (xbox_memory_layout.c's mirrors, "covers 1856 MB") and at
+ * 0x80000000; the game hands out pointers into those copies, so any of
+ * them is read through the base copy (same pages, never a hole). */
+uint32_t ygo_ram(uint32_t a)
 {
-    return (a >= 0x10000u && a < 0x08000000u) || (a >= 0x80000000u && a < 0x88000000u);
+    if (a < 0x10000u || a >= 0x88000000u)
+        return 0;
+    a &= 0x03FFFFFFu;
+    return a >= 0x10000u ? a : 0;
 }
 
 static CRITICAL_SECTION s_cs;
@@ -279,7 +287,7 @@ static volatile uint32_t s_dios_hecho;  /* the reward object already given */
 void ygo_premios_dioses_hecho(uint32_t scr)
 {
     if (scr)
-        s_dios_hecho = MEM32(scr + 0x1Cu);
+        s_dios_hecho = ygo_ram(scr) ? ygo_ram(MEM32(ygo_ram(scr) + 0x1Cu)) : 0;
 }
 
 void ygo_premios_dioses_tick(uint32_t scr)
@@ -294,14 +302,15 @@ void ygo_premios_dioses_tick(uint32_t scr)
     visto = now;
     if (!ayudas() || !scr)
         return;
-    if (!ygo_ram_ok(scr))
+    if (!ygo_ram(scr))
         return;
-    rew = MEM32(scr + 0x1Cu);
-    o = MEM32(scr + 0x10u);
+    scr = ygo_ram(scr);
+    rew = ygo_ram(MEM32(scr + 0x1Cu));
+    o = ygo_ram(MEM32(scr + 0x10u));
     /* (review) only pointers into the guest's RAM are read. 2026-11-25 (the
      * user: no sign at the tournament's gods): the low RAM alone rejected
      * the contiguous memory at 0x80000000 (the kit's XBOX_CONTIG_BASE) */
-    if (!ygo_ram_ok(rew) || !ygo_ram_ok(o) || rew == s_dios_hecho) {
+    if (!rew || !o || rew == s_dios_hecho) {
         static uint32_t dicho;
         if (rew != s_dios_hecho && dicho != rew) {
             dicho = rew;
