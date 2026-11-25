@@ -1,0 +1,86 @@
+From 362eb8db22eabc6c4953742a9cfa6f84eb5f45e9 Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 01:54:01 -0300
+Subject: [PATCH 63/74] D3D11: apply the guest's polygon offset (depth bias in
+ guest Z steps, slope scale) so coplanar decals stop z-fighting;
+ RDR_SIN_ZBIAS=1 turns it off
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/nv2a_pb_d3d11.c | 50 ++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 49 insertions(+), 1 deletion(-)
+
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 8eb265a..3eecefb 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -1645,10 +1645,48 @@ static ID3D11InputLayout *input_layout(VsEntry *e, const uint8_t fmt[16])
+  * front faces (CULL_BACK) reverse-subtracted, which leaves alpha only where
+  * the floor lies inside a volume. With no culling both passes cover the
+  * whole volume and its screen footprint comes out as one dark wedge. */
++/* rdr-port: the guest's polygon offset (SET_POLY_OFFSET_FILL_ENABLE,
++ * SET_POLYGON_OFFSET_SCALE_FACTOR / _BIAS) was parsed but never applied, so
++ * decals laid on a wall or floor at the same depth (posters, stains, the
++ * circus wagon's paint, Brimstone's signs) fought with it and flickered as
++ * the camera moved. As xemu passes them to glPolygonOffset: the factor is
++ * D3D11's slope scale, the bias is in the guest depth format's steps. The
++ * host buffer is D32_FLOAT: at depths 0.5..1, where nearly all the scene
++ * lies, its bias unit is 2^-24, one Z24 step; a Z16 step is 256 of them.
++ * RDR_SIN_ZBIAS=1 leaves it off (A/B). */
++static ID3D11RasterizerState *rs_biased(int c, int f, INT bias, float slope)
++{
++    static struct { int c, f; INT bias; float slope; ID3D11RasterizerState *rs; } k[64];
++    static int n, gen = -1;
++    D3D11_RASTERIZER_DESC rd;
++    int i;
++    if (gen != (int)(uintptr_t)s_dev) {        /* a new device: the old states are gone */
++        n = 0;
++        gen = (int)(uintptr_t)s_dev;
++    }
++    for (i = 0; i < n; i++)
++        if (k[i].c == c && k[i].f == f && k[i].bias == bias && k[i].slope == slope)
++            return k[i].rs;
++    if (n == (int)(sizeof k / sizeof k[0]))
++        return s_rs_sc[c][f];
++    ID3D11RasterizerState_GetDesc(s_rs_sc[c][f], &rd);
++    rd.DepthBias = bias;
++    rd.SlopeScaledDepthBias = slope;
++    rd.DepthBiasClamp = 0.0f;
++    if (FAILED(ID3D11Device_CreateRasterizerState(s_dev, &rd, &k[n].rs)))
++        return s_rs_sc[c][f];
++    k[n].c = c;
++    k[n].f = f;
++    k[n].bias = bias;
++    k[n].slope = slope;
++    fprintf(stderr, LOGP "polygon offset: bias %d, slope %.3f\n", (int)bias, slope);
++    return k[n++].rs;
++}
++
+ static ID3D11RasterizerState *rasterizer_state(int *all)
+ {
+     const struct nv2a_pb_vsh *v = nv2a_pb_vsh_state();
+-    static int off = -1;
++    static int off = -1, nozb = -1;
+     int c = 0, f = v->front_face != 0x900;
+ 
+     static int flip = -1;
+@@ -1663,6 +1701,16 @@ static ID3D11RasterizerState *rasterizer_state(int *all)
+         else if (v->cull_face == 0x404) c = 2;
+         else if (v->cull_face == 0x408) *all = 1;
+     }
++    if (nozb < 0)
++        nozb = getenv("RDR_SIN_ZBIAS") && *getenv("RDR_SIN_ZBIAS") == '1';
++    if (!nozb && v->poly_offset && (v->poly_bias != 0.0f || v->poly_factor != 0.0f)) {
++        /* surface format bits 4-7: 1 Z16, 2 Z24S8 */
++        float step = ((nv2a_pb_gpu_state()->format >> 4) & 0xF) == 1 ? 256.0f : 1.0f;
++        float b = v->poly_bias * step;
++        if (b > 1e6f) b = 1e6f;
++        if (b < -1e6f) b = -1e6f;
++        return rs_biased(c, f, (INT)(b < 0 ? b - 0.5f : b + 0.5f), v->poly_factor);
++    }
+     return s_rs_sc[c][f];
+ }
+ 
+-- 
+2.55.0.windows.3
+

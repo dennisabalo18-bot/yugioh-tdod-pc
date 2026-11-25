@@ -1,0 +1,57 @@
+From acd7b7bb733e0a05986a0064b447f240428d669f Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 02:13:26 -0300
+Subject: [PATCH 67/74] Movies: apply the live options (window size,
+ fullscreen, F11) before and during a movie: the boot's first movie now comes
+ before the first flip
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/nv2a_pb_d3d11.c | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 3eecefb..9d8203a 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -5975,11 +5975,9 @@ static void window_apply(void)
+  * its top-left quarter for one flip). Filter, aniso, movie and overscan
+  * are read where they are used (present_blit, the sampler key, the movie
+  * draw), so storing them is the change. */
+-static void d3d11_on_flip(uint32_t surface_offset, uint32_t pitch)
++static void opts_apply_now(void)
+ {
+-    unsigned changed;
+-    d3d11_flip(surface_offset, pitch);
+-    changed = nv2a_host_opts_apply();
++    unsigned changed = nv2a_host_opts_apply();
+     if ((changed & (NV2A_OPT_SCALE | NV2A_OPT_ASPECT)) && s_dev)
+         scale_drop();
+     if (changed & NV2A_OPT_FULLSCREEN)
+@@ -5987,6 +5985,12 @@ static void d3d11_on_flip(uint32_t surface_offset, uint32_t pitch)
+     window_apply();
+ }
+ 
++static void d3d11_on_flip(uint32_t surface_offset, uint32_t pitch)
++{
++    d3d11_flip(surface_offset, pitch);
++    opts_apply_now();
++}
++
+ /* ---- registration ---------------------------------------------------------- */
+ 
+ /* ---- Visibility tests: D3D11 occlusion queries ----------------------
+@@ -6288,6 +6292,10 @@ static int movie_run(const wchar_t *path)
+     fprintf(stderr, LOGP "movie %ls\n", path);
+     while (!done) {
+         pump();
++        /* rdr-port: the window size and fullscreen from rdr_menu.ini (and
++         * F11) also before the game's first frame: the boot's first movie
++         * now comes before it and played in the small starting window. */
++        opts_apply_now();
+         if (s_unfocused && nv2a_d3d11_pause_focus(-1)) {
+             movie_mf_pause(m, 1);
+             while (s_unfocused && nv2a_d3d11_pause_focus(-1)) {
+-- 
+2.55.0.windows.3
+

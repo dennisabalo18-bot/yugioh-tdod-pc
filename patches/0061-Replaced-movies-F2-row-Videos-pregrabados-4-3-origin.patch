@@ -1,0 +1,82 @@
+From bda1979d4f7d53a7cd1887a55dd23f5c25d75753 Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 01:43:05 -0300
+Subject: [PATCH 61/74] Replaced movies: F2 row 'Videos pregrabados' (4:3
+ original / fill the screen, cropping top and bottom); subtitles stay on the
+ fitted frame
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/host_menu.c     |  8 ++++++++
+ src/d3d/nv2a_pb_d3d11.c | 17 +++++++++++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/src/d3d/host_menu.c b/src/d3d/host_menu.c
+index 9cebc8f..b328891 100644
+--- a/src/d3d/host_menu.c
++++ b/src/d3d/host_menu.c
+@@ -178,6 +178,13 @@ static int s_fps_on;
+ static int get_fps(void) { return s_fps_on; }
+ static void set_fps(int i) { s_fps_on = i; }
+ 
++/* rdr-port: the replaced movies (nv2a_pb_d3d11.c's player). */
++void nv2a_d3d11_movie_fill_set(int on);
++int  nv2a_d3d11_movie_fill(void);
++static const char *const k_movie[] = { "4:3 (original)", "Llenar pantalla", NULL };
++static int get_movie(void) { return nv2a_d3d11_movie_fill(); }
++static void set_movie(int i) { nv2a_d3d11_movie_fill_set(i); }
++
+ static const char *const k_speed[] = { "x1", "x2 (Ctrl+F8)", "x4 (Ctrl+F8 dos veces)", NULL };
+ static int get_speed(void) { return xbox_Speed() >= 4 ? 2 : xbox_Speed() > 1; }
+ static void set_speed(int i) { xbox_SpeedSet(1u << i); }
+@@ -192,6 +199,7 @@ static const xbox_menu_item k_builtin[] = {
+     { "tex_dump", "Volcar texturas a carpeta", k_onoff, get_dump, set_dump },
+     { "vsync", "VSync (sincronía vertical)", k_onoff, get_vsync, set_vsync },
+     { "fps", "Mostrar FPS", k_onoff, get_fps, set_fps },
++    { "movie_fill", "Videos pregrabados", k_movie, get_movie, set_movie },
+     { NULL, "Juego", NULL, NULL, NULL },
+     { "language", "Idioma (al reiniciar)", k_lang, get_lang, set_lang },
+     { NULL, "Velocidad", k_speed, get_speed, set_speed },
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 1ff49b2..1d26a38 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -6111,6 +6111,12 @@ static int d3d11_on_report(uint32_t va)
+ #include "movie_mf.h"
+ 
+ static volatile LONG s_movie_state;    /* 0 idle, 1 asked, 2 played, 3 failed */
++/* rdr-port: F2 / launcher "Videos pregrabados": 0 the movie's own shape
++ * (4:3, bars at the sides on a wide screen), 1 fill the screen (scaled up
++ * to cover it, the top and bottom cropped). */
++static volatile LONG s_movie_fill;
++void nv2a_d3d11_movie_fill_set(int on) { InterlockedExchange(&s_movie_fill, on != 0); }
++int nv2a_d3d11_movie_fill(void) { return (int)s_movie_fill; }
+ static wchar_t s_movie_path[MAX_PATH];
+ static HANDLE s_movie_done;
+ 
+@@ -6161,11 +6167,22 @@ static void movie_draw(ID3D11ShaderResourceView *srv, UINT w, UINT h)
+     vp.MinDepth = 0.0f;
+     vp.MaxDepth = 1.0f;
+ #ifdef XBOXRECOMP_ENHANCE
++    /* the subtitles keep the fitted frame: at the screen's bottom either way */
+     s_ovl_place.x = (int32_t)vp.TopLeftX;
+     s_ovl_place.y = (int32_t)vp.TopLeftY;
+     s_ovl_place.w = (int32_t)vp.Width;
+     s_ovl_place.h = (int32_t)vp.Height;
+ #endif
++    if (s_movie_fill) {
++        /* cover the back buffer: the larger scale, centred, overflow cut */
++        float k = (float)s_back_w / vp.Width, ky = (float)s_back_h / vp.Height;
++        if (ky > k)
++            k = ky;
++        vp.Width *= k;
++        vp.Height *= k;
++        vp.TopLeftX = ((float)s_back_w - vp.Width) * 0.5f;
++        vp.TopLeftY = ((float)s_back_h - vp.Height) * 0.5f;
++    }
+     ID3D11DeviceContext_OMSetRenderTargets(s_ctx, 1, &s_back_rtv, NULL);
+     ID3D11DeviceContext_ClearRenderTargetView(s_ctx, s_back_rtv, black);
+     ID3D11DeviceContext_RSSetViewports(s_ctx, 1, &vp);
+-- 
+2.55.0.windows.3
+

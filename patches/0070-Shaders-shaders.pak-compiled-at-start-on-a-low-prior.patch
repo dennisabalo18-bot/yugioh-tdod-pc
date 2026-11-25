@@ -1,0 +1,171 @@
+From e4dc0eea2d5eada50300f3a6d44de859bc18cbcd Mon Sep 17 00:00:00 2001
+From: rdr-port <rdr-port@users.noreply.github.com>
+Date: Fri, 6 Nov 2026 16:55:57 -0300
+Subject: [PATCH 70/74] Shaders: shaders.pak compiled at start on a
+ low-priority thread; [HITCH] log for frames over 150 ms
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/nv2a_pb_d3d11.c | 132 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 132 insertions(+)
+
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 9d8203a..929309e 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -594,6 +594,119 @@ static int compile(const char *what, const char *src, const char *target,
+     return 1;
+ }
+ 
++/* rdr-port: shaders.pak beside the exe holds the programs the game asked
++ * for on a long playthrough (tools/armar_shaders.py, from the shader cache):
++ * "RDRSHPK1", u32 count, then per entry u32-length-prefixed target and
++ * entry, u32 flags1, u32 flags2, u32-length-prefixed source. A new area
++ * asked for several at once, each compiled while the frame waited (14 ms on
++ * average, up to 58 on a Ryzen 9): stalls of 0.2-0.7 s the first time
++ * through. This thread, at low priority, compiles the ones missing from this
++ * PC's cache when the game starts and creates each shader once so that the
++ * driver's own cache has it too; compile() then finds them in the cache.
++ * One the pack lacks compiles in the frame as before. The thread has its
++ * own shader_cache (the counters are not shared); D3DCompile and the
++ * device's Create calls are free-threaded. */
++static DWORD WINAPI shader_pak_thread(void *arg)
++{
++    char path[MAX_PATH + 16], *slash, tgt[16], ent[16];
++    unsigned char *b = NULL;
++    size_t n = 0, p = 12;
++    uint32_t count = 0, i, done = 0, built = 0, bad = 0;
++    double t0 = sh_now_ms(), tc = 0.0;
++    shader_cache pc;
++    FILE *f;
++    long sz;
++
++    (void)arg;
++    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
++    if (!GetModuleFileNameA(NULL, path, MAX_PATH) || !(slash = strrchr(path, '\\')))
++        return 0;
++    strcpy(slash + 1, "shaders.pak");
++    if (!(f = fopen(path, "rb")))
++        return 0;
++    if (fseek(f, 0, SEEK_END) == 0 && (sz = ftell(f)) > 12 && sz < (64L << 20)
++     && fseek(f, 0, SEEK_SET) == 0 && (b = (unsigned char *)malloc((size_t)sz))
++     && fread(b, 1, (size_t)sz, f) == (size_t)sz)
++        n = (size_t)sz;
++    fclose(f);
++    if (!n || memcmp(b, "RDRSHPK1", 8) || !shader_cache_init(&pc, s_shc.dir)) {
++        fprintf(stderr, LOGP "shaders.pak: not read\n");
++        free(b);
++        return 0;
++    }
++    memcpy(&count, b + 8, 4);
++    for (i = 0; i < count; i++) {
++        uint32_t lt, le, ls, fl[2];
++        const char *src;
++        shader_cache_key key;
++        size_t len = 0, bl;
++        void *hit;
++        const void *bc;
++        ID3DBlob *code = NULL;
++
++        if (p + 4 > n || (memcpy(&lt, b + p, 4), p += 4, lt >= sizeof tgt || lt > n - p)) break;
++        memcpy(tgt, b + p, lt); tgt[lt] = 0; p += lt;
++        if (p + 4 > n || (memcpy(&le, b + p, 4), p += 4, le >= sizeof ent || le > n - p)) break;
++        memcpy(ent, b + p, le); ent[le] = 0; p += le;
++        if (p + 12 > n) break;
++        memcpy(fl, b + p, 8); p += 8;
++        memcpy(&ls, b + p, 4); p += 4;
++        if (ls > n - p) break;
++        src = (const char *)b + p; p += ls;
++
++        key.compiler = s_shc_compiler;
++        key.target = tgt;
++        key.entry = ent;
++        key.flags1 = fl[0];
++        key.flags2 = fl[1];
++        key.src = src;
++        key.src_len = ls;
++        if ((hit = shader_cache_load(&pc, &key, &len)) != NULL) {
++            bc = hit;
++            bl = len;
++        } else {
++            double t = sh_now_ms();
++            if (FAILED(s_compile(src, ls, "shaders.pak", NULL, NULL, ent, tgt,
++                                 fl[0], fl[1], &code, NULL)) || !code) {
++                bad++;
++                continue;
++            }
++            tc += sh_now_ms() - t;
++            built++;
++            bc = ID3D10Blob_GetBufferPointer(code);
++            bl = ID3D10Blob_GetBufferSize(code);
++            shader_cache_store(&pc, &key, bc, bl);
++        }
++        if (tgt[0] == 'v') {
++            ID3D11VertexShader *vs = NULL;
++            if (SUCCEEDED(ID3D11Device_CreateVertexShader(s_dev, bc, bl, NULL, &vs)) && vs)
++                ID3D11VertexShader_Release(vs);
++        } else if (tgt[0] == 'p') {
++            ID3D11PixelShader *ps = NULL;
++            if (SUCCEEDED(ID3D11Device_CreatePixelShader(s_dev, bc, bl, NULL, &ps)) && ps)
++                ID3D11PixelShader_Release(ps);
++        }
++        free(hit);
++        if (code)
++            ID3D10Blob_Release(code);
++        done++;
++    }
++    fprintf(stderr, LOGP "shaders.pak: %u of %u ready, %u compiled now (%.0f ms), %u failed,"
++            " %.0f ms in all\n", done, count, built, tc, bad, sh_now_ms() - t0);
++    free(b);
++    return 0;
++}
++
++static void shader_pak_start(void)
++{
++    HANDLE t;
++    if (!s_shc.dir[0] || !s_compile || !s_dev)
++        return;
++    t = CreateThread(NULL, 0, shader_pak_thread, NULL, 0, NULL);
++    if (t)
++        CloseHandle(t);
++}
++
+ static ID3D11Buffer *make_buffer(UINT size, UINT bind)
+ {
+     D3D11_BUFFER_DESC bd;
+@@ -789,6 +902,7 @@ static int init(void)
+                 (unsigned long)hr);
+         return 0;
+     }
++    shader_pak_start();
+     /* DXGI's default window association takes Alt+Enter as a fullscreen
+      * toggle, and nothing here follows that switch. With the keyboard on,
+      * Alt is a key players hold in play (a walk key) and Enter is START,
+@@ -5770,6 +5884,24 @@ static void d3d11_flip(uint32_t surface_offset, uint32_t pitch)
+                    ? read_tex_pixel(s_back, (UINT)s_probe_x, (UINT)s_probe_y)
+                    : 0xDEADBEEFu;
+     s_presents++;
++    /* rdr-port: a frame over 150 ms since the last one goes to the log with
++     * the shaders compiled in it, to tell those stalls from others (a load,
++     * the disk, the PC); at most 300 lines a run. */
++    {
++        static double last, ms0;
++        static unsigned n0, c0, lines;
++        double now = sh_now_ms();
++        if (last > 0.0 && now - last > 150.0 && lines < 300) {
++            lines++;
++            fprintf(stderr, "[HITCH] frame %llu took %.0f ms: %u shaders compiled in it (%.0f ms),"
++                    " %u from the cache\n", (unsigned long long)s_presents, now - last,
++                    s_sh_compiled - n0, s_sh_compile_ms - ms0, s_sh_cached - c0);
++        }
++        last = now;
++        n0 = s_sh_compiled;
++        c0 = s_sh_cached;
++        ms0 = s_sh_compile_ms;
++    }
+     dump_frame();
+ #ifdef XBOXRECOMP_ENHANCE
+     ovl_present();
+-- 
+2.55.0.windows.3
+

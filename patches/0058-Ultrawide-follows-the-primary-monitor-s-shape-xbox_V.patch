@@ -1,0 +1,119 @@
+From ce753636b4af66313f264efeb82534a333ee2ba7 Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 00:52:06 -0300
+Subject: [PATCH 58/74] Ultrawide follows the primary monitor's shape
+ (xbox_VideoWideAspect: 43:18 below 20:9, at most 32:9); more ultrawide window
+ sizes
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/host_menu.c      |  4 ++--
+ src/d3d/nv2a_pb_d3d11.c  |  6 +++---
+ src/kernel/kernel.h      |  4 ++++
+ src/kernel/kernel_xbox.c | 29 ++++++++++++++++++++++++++++-
+ 4 files changed, 37 insertions(+), 6 deletions(-)
+
+diff --git a/src/d3d/host_menu.c b/src/d3d/host_menu.c
+index 97565d8..9cebc8f 100644
+--- a/src/d3d/host_menu.c
++++ b/src/d3d/host_menu.c
+@@ -78,7 +78,7 @@ static void __attribute__((unused)) set_aspect(int i)
+  * hor+ padding (display.aspect, get_aspect) stays out of the menu: on this
+  * title it did nothing visible. */
+ /* rdr-port: 21:9 is the same view widened further (rdr-apex widescreen.c). */
+-static const char *const k_wide[] = { "No (4:3)", "Sí (nativo del juego)", "21:9 (ultrapanorámico)", NULL };
++static const char *const k_wide[] = { "No (4:3)", "Sí (nativo del juego)", "Ultrapanorámico (según el monitor)", NULL };
+ static int get_wide(void) { return xbox_VideoWidescreen(); }
+ static void set_wide(int i) { xbox_VideoWidescreenSet(i); }
+ 
+@@ -115,7 +115,7 @@ static void set_lang(int i)
+ static const char *const k_window[] = {
+     "Libre", "640x480", "800x600", "960x720", "1024x768", "1280x720", "1280x960",
+     "1366x768", "1440x1080", "1600x900", "1600x1200", "1920x1080", "2560x1080",
+-    "2560x1440", "3440x1440", "3840x2160", NULL
++    "2560x1440", "3440x1440", "3840x1600", "3840x2160", "5120x1440", "5120x2160", NULL
+ };
+ static int s_window;
+ static void set_full(int i);
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 0e174a2..180a75b 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -640,9 +640,9 @@ static void create_black_texture(void);
+  * kernel.h): the title draws its 16:9 view anamorphic into its 480-line
+  * frame, as for a widescreen TV. The present shows such a frame at 16:9
+  * (wide_frame) and the window starts 16:9; ultrawide (2) is the same at
+- * 43:18 (3440x1440). */
+-static unsigned wide_aw(void) { extern int xbox_VideoWidescreen(void); return xbox_VideoWidescreen() == 2 ? 43u : 16u; }
+-static unsigned wide_ah(void) { extern int xbox_VideoWidescreen(void); return xbox_VideoWidescreen() == 2 ? 18u : 9u; }
++ * the monitor's shape (xbox_VideoWideAspect). */
++static unsigned wide_aw(void) { unsigned w, h; extern void xbox_VideoWideAspect(unsigned *, unsigned *); xbox_VideoWideAspect(&w, &h); return w; }
++static unsigned wide_ah(void) { unsigned w, h; extern void xbox_VideoWideAspect(unsigned *, unsigned *); xbox_VideoWideAspect(&w, &h); return h; }
+ static int wide_tv(void)
+ {
+     extern int xbox_VideoWidescreen(void);
+diff --git a/src/kernel/kernel.h b/src/kernel/kernel.h
+index 7c4c27d..453fb54 100644
+--- a/src/kernel/kernel.h
++++ b/src/kernel/kernel.h
+@@ -1327,6 +1327,10 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
+  * and the D3D11 present shows its 640x480 frame at 16:9. */
+ void xbox_VideoWidescreenSet(int on);
+ int  xbox_VideoWidescreen(void);
++/* The shape the game's view is widened to: 16:9, or for ultrawide (2) the
++ * primary monitor's own (2560x1080, 3440x1440, 3840x1600, 5120x1440...),
++ * 43:18 on a monitor narrower than 20:9, at most 32:9. */
++void xbox_VideoWideAspect(unsigned *w, unsigned *h);
+ 
+ /* rdr-port: the XC_LANGUAGE the title reads (1 English .. 6 Italian), from
+  * RECOMP_LANGUAGE or the F2 menu; it picks its language at boot. */
+diff --git a/src/kernel/kernel_xbox.c b/src/kernel/kernel_xbox.c
+index adf88e3..79b95aa 100644
+--- a/src/kernel/kernel_xbox.c
++++ b/src/kernel/kernel_xbox.c
+@@ -15,7 +15,7 @@
+ #include <time.h>
+ 
+ /* rdr-port: a widescreen display wanted (kernel.h): 0 none (4:3), 1 16:9,
+- * 2 ultrawide (43:18, 3440x1440 and the like). Not reported through
++ * 2 ultrawide (the monitor's shape, xbox_VideoWideAspect). Not reported through
+  * XC_VIDEO (see there); read by the D3D11 present and the title port. */
+ static int s_widescreen = -1;
+ 
+@@ -33,6 +33,33 @@ int xbox_VideoWidescreen(void)
+     return s_widescreen;
+ }
+ 
++__declspec(dllimport) int __stdcall GetSystemMetrics(int index);
++
++void xbox_VideoWideAspect(unsigned *w, unsigned *h)
++{
++    static unsigned sw, sh;
++    if (xbox_VideoWidescreen() != 2) {
++        *w = 16u;
++        *h = 9u;
++        return;
++    }
++    if (!sh) {
++        unsigned mw = (unsigned)GetSystemMetrics(0 /* SM_CXSCREEN */);
++        unsigned mh = (unsigned)GetSystemMetrics(1 /* SM_CYSCREEN */);
++        if (!mw || !mh || mw * 9u < mh * 20u) {
++            mw = 43u;                       /* a 16:9 monitor: 3440x1440's */
++            mh = 18u;
++        } else if (mw * 9u > mh * 32u) {
++            mw = 32u;
++            mh = 9u;
++        }
++        sw = mw;
++        sh = mh;
++    }
++    *w = sw;
++    *h = sh;
++}
++
+ /* rdr-port: the dashboard language (XC_LANGUAGE, kernel.h): 1 English,
+  * 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian. RECOMP_LANGUAGE
+  * takes the number or en/ja/de/fr/es/it; the F2 menu sets it too. */
+-- 
+2.55.0.windows.3
+

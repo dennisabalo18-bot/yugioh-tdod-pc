@@ -1,0 +1,56 @@
+From d82a2b2ff272e244c35bdb9b70a4f1888c945f71 Mon Sep 17 00:00:00 2001
+From: rdr-port <rdr-port@users.noreply.github.com>
+Date: Fri, 6 Nov 2026 19:00:52 -0300
+Subject: [PATCH 71/74] Movies: third mode, stretched to the screen
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/host_menu.c     |  2 +-
+ src/d3d/nv2a_pb_d3d11.c | 11 +++++++++--
+ 2 files changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/src/d3d/host_menu.c b/src/d3d/host_menu.c
+index 1d93ee7..8466805 100644
+--- a/src/d3d/host_menu.c
++++ b/src/d3d/host_menu.c
+@@ -181,7 +181,7 @@ static void set_fps(int i) { s_fps_on = i; }
+ /* rdr-port: the replaced movies (nv2a_pb_d3d11.c's player). */
+ void nv2a_d3d11_movie_fill_set(int on);
+ int  nv2a_d3d11_movie_fill(void);
+-static const char *const k_movie[] = { "4:3 (original)", "Llenar pantalla", NULL };
++static const char *const k_movie[] = { "4:3 (original)", "Llenar pantalla", "Estirar (deformado)", NULL };
+ static int get_movie(void) { return nv2a_d3d11_movie_fill(); }
+ static void set_movie(int i) { nv2a_d3d11_movie_fill_set(i); }
+ 
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 929309e..3c215e1 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -6299,7 +6299,8 @@ static volatile LONG s_movie_state;    /* 0 idle, 1 asked, 2 played, 3 failed, 4
+  * (4:3, bars at the sides on a wide screen), 1 fill the screen (scaled up
+  * to cover it, the top and bottom cropped). */
+ static volatile LONG s_movie_fill;
+-void nv2a_d3d11_movie_fill_set(int on) { InterlockedExchange(&s_movie_fill, on != 0); }
++/* 0 fitted (4:3), 1 cover (cropped), 2 stretched to the screen (rdr-port) */
++void nv2a_d3d11_movie_fill_set(int on) { InterlockedExchange(&s_movie_fill, on < 0 ? 0 : on > 2 ? 2 : on); }
+ int nv2a_d3d11_movie_fill(void) { return (int)s_movie_fill; }
+ static wchar_t s_movie_path[MAX_PATH];
+ static HANDLE s_movie_done;
+@@ -6357,7 +6358,13 @@ static void movie_draw(ID3D11ShaderResourceView *srv, UINT w, UINT h)
+     s_ovl_place.w = (int32_t)vp.Width;
+     s_ovl_place.h = (int32_t)vp.Height;
+ #endif
+-    if (s_movie_fill) {
++    if (s_movie_fill == 2) {
++        /* stretched: the whole back buffer, nothing cut, the shape lost */
++        vp.Width = (float)s_back_w;
++        vp.Height = (float)s_back_h;
++        vp.TopLeftX = 0.0f;
++        vp.TopLeftY = 0.0f;
++    } else if (s_movie_fill) {
+         /* cover the back buffer: the larger scale, centred, overflow cut */
+         float k = (float)s_back_w / vp.Width, ky = (float)s_back_h / vp.Height;
+         if (ky > k)
+-- 
+2.55.0.windows.3
+

@@ -1,0 +1,179 @@
+From 9a6096aaca7c5415c69167db60d676882a6f3aa6 Mon Sep 17 00:00:00 2001
+From: rdr-port <rdr-port@users.noreply.github.com>
+Date: Fri, 6 Nov 2026 21:00:01 -0300
+Subject: [PATCH 72/74] Stray reads of kernel-import and flash addresses get a
+ page of zeros instead of closing the game; disk read timing in [HITCH],
+ [SLOWREAD]
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/nv2a_pb_d3d11.c         | 16 ++++++++++++--
+ src/kernel/kernel_file.c        | 36 ++++++++++++++++++++++++++++++
+ src/kernel/xbox_memory_layout.c | 39 ++++++++++++++++++++++++++++++++-
+ 3 files changed, 88 insertions(+), 3 deletions(-)
+
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 3c215e1..a3f9eca 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -5888,19 +5888,31 @@ static void d3d11_flip(uint32_t surface_offset, uint32_t pitch)
+      * the shaders compiled in it, to tell those stalls from others (a load,
+      * the disk, the PC); at most 300 lines a run. */
+     {
++        extern void xbox_FileReadStats(uint64_t *reads, uint64_t *bytes, uint64_t *us);
+         static double last, ms0;
+         static unsigned n0, c0, lines;
++        static uint64_t r0, b0, u0, up0, re0, d0;
++        uint64_t r, b, u;
+         double now = sh_now_ms();
++        xbox_FileReadStats(&r, &b, &u);
+         if (last > 0.0 && now - last > 150.0 && lines < 300) {
+             lines++;
+             fprintf(stderr, "[HITCH] frame %llu took %.0f ms: %u shaders compiled in it (%.0f ms),"
+-                    " %u from the cache\n", (unsigned long long)s_presents, now - last,
+-                    s_sh_compiled - n0, s_sh_compile_ms - ms0, s_sh_cached - c0);
++                    " %u from the cache; disk %llu reads %llu KB %.0f ms; %llu draws,"
++                    " %llu texture uploads, %llu rehashes\n",
++                    (unsigned long long)s_presents, now - last,
++                    s_sh_compiled - n0, s_sh_compile_ms - ms0, s_sh_cached - c0,
++                    (unsigned long long)(r - r0), (unsigned long long)((b - b0) / 1024u),
++                    (double)(u - u0) / 1000.0, (unsigned long long)(s_draws - d0),
++                    (unsigned long long)(s_tex_uploads - up0),
++                    (unsigned long long)(s_tex_rehash - re0));
+         }
+         last = now;
+         n0 = s_sh_compiled;
+         c0 = s_sh_cached;
+         ms0 = s_sh_compile_ms;
++        r0 = r; b0 = b; u0 = u;
++        d0 = s_draws; up0 = s_tex_uploads; re0 = s_tex_rehash;
+     }
+     dump_frame();
+ #ifdef XBOXRECOMP_ENHANCE
+diff --git a/src/kernel/kernel_file.c b/src/kernel/kernel_file.c
+index 06442da..454e6f9 100644
+--- a/src/kernel/kernel_file.c
++++ b/src/kernel/kernel_file.c
+@@ -405,6 +405,39 @@ static NTSTATUS host_NtCreateFile(
+     return STATUS_SUCCESS;
+ }
+ 
++/* rdr-port: the title's file reads, timed, for the [HITCH] lines (a frame
++ * that stalled while the game read its data from a slow disk) and a
++ * [SLOWREAD] line for any single read over 100 ms (at most 200 a run). */
++static volatile LONG64 s_rd_n, s_rd_bytes, s_rd_us;
++
++void xbox_FileReadStats(uint64_t *reads, uint64_t *bytes, uint64_t *us)
++{
++    *reads = (uint64_t)InterlockedCompareExchange64(&s_rd_n, 0, 0);
++    *bytes = (uint64_t)InterlockedCompareExchange64(&s_rd_bytes, 0, 0);
++    *us = (uint64_t)InterlockedCompareExchange64(&s_rd_us, 0, 0);
++}
++
++static void read_timed(HANDLE h, ULONG len, LARGE_INTEGER t0, DWORD got)
++{
++    static LARGE_INTEGER f;
++    static volatile LONG slow;
++    LARGE_INTEGER t1;
++    LONG64 us;
++    if (!f.QuadPart)
++        QueryPerformanceFrequency(&f);
++    QueryPerformanceCounter(&t1);
++    us = (LONG64)((t1.QuadPart - t0.QuadPart) * 1000000 / f.QuadPart);
++    InterlockedIncrement64(&s_rd_n);
++    InterlockedAdd64(&s_rd_bytes, (LONG64)got);
++    InterlockedAdd64(&s_rd_us, us);
++    if (us > 100000 && InterlockedIncrement(&slow) <= 200) {
++        char name[MAX_PATH] = "?";
++        GetFinalPathNameByHandleA(h, name, sizeof name, 0);
++        fprintf(stderr, "[SLOWREAD] %lu KB in %lld ms: %s\n",
++                (unsigned long)(len / 1024u), (long long)(us / 1000), name);
++    }
++}
++
+ static NTSTATUS host_NtReadFile(
+     HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext,
+     PXBOX_IO_STATUS_BLOCK IoStatusBlock, PVOID Buffer, ULONG Length,
+@@ -413,12 +446,14 @@ static NTSTATUS host_NtReadFile(
+     DWORD bytes_read = 0;
+     BOOL result;
+     OVERLAPPED ov;
++    LARGE_INTEGER rd_t0;
+     (void)ApcRoutine; (void)ApcContext;
+ 
+     if (!IoStatusBlock)
+         return STATUS_INVALID_PARAMETER;
+ 
+     overwrite_settle(FileHandle);
++    QueryPerformanceCounter(&rd_t0);
+     if (ByteOffset && ByteOffset->QuadPart >= 0) {
+         memset(&ov, 0, sizeof(ov));
+         ov.Offset = ByteOffset->LowPart;
+@@ -427,6 +462,7 @@ static NTSTATUS host_NtReadFile(
+     } else {
+         result = ReadFile(FileHandle, Buffer, Length, &bytes_read, NULL);
+     }
++    read_timed(FileHandle, Length, rd_t0, bytes_read);
+ 
+     if (result || GetLastError() == ERROR_HANDLE_EOF) {
+         IoStatusBlock->Information = bytes_read;
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+index 4fbb020..9b0f5c8 100644
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -932,6 +932,42 @@ extern bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
+  * EXCEPTION_CONTINUE_EXECUTION. APU, then OHCI. The AC'97 page needs no call
+  * here: its trap is a VEH of its own, installed first, because it single-steps
+  * the write and so has to see the EXCEPTION_SINGLE_STEP that follows. */
++/* rdr-port: guest addresses that are readable on the console but have
++ * nothing behind them here. 0xFE000000 + 4*slot is the synthetic address the
++ * bridge writes into each kernel import (kernel_bridge.c KERNEL_VA_BASE); on
++ * the console the slot holds the export's real address, which is kernel
++ * memory a stray read can see. RDR's boss fight once read through a stale
++ * object pointer that held one of these (0xFE000224 + 0x14) and the game
++ * closed; on the console it read kernel bytes and went on. 0xFF000000 up is
++ * the flash ROM, readable on the console too. A fault there gets a page of
++ * zeros, committed once, and the access is retried; logged, at most 64 pages
++ * a run. Everything else still faults as before. */
++#define STRAY_THUNK_LO 0xFE000000u
++#define STRAY_THUNK_HI 0xFE010000u
++#define STRAY_FLASH_LO 0xFF000000u
++static volatile LONG g_stray_pages;
++
++static int stray_page_fault(uintptr_t fault, uint32_t va, int is_write)
++{
++    uintptr_t page;
++    LONG n;
++
++    if (!((va >= STRAY_THUNK_LO && va < STRAY_THUNK_HI) || va >= STRAY_FLASH_LO))
++        return 0;
++    if ((n = InterlockedIncrement(&g_stray_pages)) > 64)
++        return 0;
++    page = fault & ~(uintptr_t)0xFFF;
++    if (!VirtualAlloc((void *)page, 0x1000, MEM_COMMIT, PAGE_READWRITE)
++     && !VirtualAlloc((void *)page, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)) {
++        fprintf(stderr, "[STRAY] %s at guest 0x%08X: no page (err %lu)\n",
++                is_write ? "write" : "read", va, (unsigned long)GetLastError());
++        return 0;
++    }
++    fprintf(stderr, "[STRAY] %s at guest 0x%08X (nothing there on PC): page of zeros, game goes on (#%ld)\n",
++            is_write ? "write" : "read", va, (long)n);
++    return 1;
++}
++
+ int xbox_VehMmioFault(void *exception_pointers)
+ {
+     PEXCEPTION_POINTERS ep = (PEXCEPTION_POINTERS)exception_pointers;
+@@ -949,7 +985,8 @@ int xbox_VehMmioFault(void *exception_pointers)
+                    ep->ExceptionRecord->ExceptionInformation[0] ? 1 : 0);
+     if (xbox_OhciOwnsAddress(va))
+         return xbox_OhciHandleMmio(ep->ContextRecord, va);
+-    return 0;
++    return stray_page_fault(fault, va,
++                            ep->ExceptionRecord->ExceptionInformation[0] ? 1 : 0);
+ }
+ #else
+ #if defined(XBOX_MMIO_TRAP_POSIX)
+-- 
+2.55.0.windows.3
+

@@ -1,0 +1,90 @@
+From 6dbf7049c06ee71314baf82950e54558b512d89c Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Thu, 5 Nov 2026 21:05:13 -0300
+Subject: [PATCH 56/74] F2 menu: language hook, so the panel follows the
+ language picked in its own row
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/host_menu.c | 13 ++++++++++---
+ src/d3d/host_menu.h |  4 ++++
+ 2 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/src/d3d/host_menu.c b/src/d3d/host_menu.c
+index 0ca357b..7729316 100644
+--- a/src/d3d/host_menu.c
++++ b/src/d3d/host_menu.c
+@@ -34,6 +34,7 @@ static char s_path[MAX_PATH];
+ 
+ /* rdr-port: the shown text in the player's language (xbox_MenuSetTranslator). */
+ static const char *(*s_tr)(const char *);
++static unsigned s_tr_gen;                 /* bumped on each xbox_MenuSetTranslator */
+ static const char *TR(const char *s)
+ {
+     const char *t = s && s_tr ? s_tr(s) : NULL;
+@@ -88,6 +89,9 @@ static const int k_lang_id[] = { 1, 5, 4, 3, 6 };
+  * English got the legal screen and the loading text in Italian). Only the
+  * saved choice (xbox_MenuLoad, before the game runs) sets the language. */
+ static int s_lang_choice = -1;
++static const char *const k_lang_code[] = { "en", "es", "fr", "de", "it" };
++static void (*s_lang_cb)(const char *code);
++void xbox_MenuSetLanguageHook(void (*cb)(const char *code)) { s_lang_cb = cb; }
+ static int get_lang(void)
+ {
+     int i;
+@@ -103,6 +107,8 @@ static void set_lang(int i)
+     s_lang_choice = i;
+     if (s_loading)
+         xbox_LanguageSet(k_lang_id[i]);
++    else if (s_lang_cb)
++        s_lang_cb(k_lang_code[i]);
+ }
+ 
+ static const char *const k_window[] = {
+@@ -516,6 +522,7 @@ static ULONGLONG s_toast_until;
+ void xbox_MenuSetTranslator(const char *(*tr)(const char *utf8))
+ {
+     s_tr = tr;
++    s_tr_gen++;
+     s_sig = 0;
+ }
+ 
+@@ -612,9 +619,9 @@ const uint32_t *xbox_MenuPixels(unsigned back_h, unsigned *w, unsigned *h, unsig
+          * choice in the shown language (German runs long); measured once a
+          * size and translator. */
+         static unsigned w_for_px;
+-        static const void *w_for_tr;
++        static unsigned w_for_tr;
+         static unsigned w_need;
+-        if (w_for_px != fpx || w_for_tr != (const void *)s_tr) {
++        if (w_for_px != fpx || w_for_tr != s_tr_gen) {
+             int lw = 0, vw = 0, j, c;
+             if (!make_fonts(fpx))
+                 return NULL;
+@@ -635,7 +642,7 @@ const uint32_t *xbox_MenuPixels(unsigned back_h, unsigned *w, unsigned *h, unsig
+             }
+             w_need = (unsigned)(lw + vw) + pad * 2u + fpx * 2u;
+             w_for_px = fpx;
+-            w_for_tr = (const void *)s_tr;
++            w_for_tr = s_tr_gen;
+         }
+         if (w_need > W)
+             W = w_need;
+diff --git a/src/d3d/host_menu.h b/src/d3d/host_menu.h
+index 51d2639..bd4f084 100644
+--- a/src/d3d/host_menu.h
++++ b/src/d3d/host_menu.h
+@@ -34,6 +34,10 @@ typedef struct xbox_menu_item {
+  * player's language or NULL to keep it. rdr_menu.ini keeps the choices as
+  * the rows spell them, whatever is shown. */
+ void xbox_MenuSetTranslator(const char *(*tr)(const char *utf8));
++/* rdr-port: called with "en", "es", "fr", "de" or "it" when the player picks
++ * a language in the panel (not when rdr_menu.ini is loaded), so the panel
++ * can follow it at once. Calling xbox_MenuSetTranslator again redraws. */
++void xbox_MenuSetLanguageHook(void (*cb)(const char *code));
+ /* Adds a row (the struct is kept by pointer: give it static storage). */
+ void xbox_MenuAdd(const xbox_menu_item *it);
+ /* Applies the choices saved in path and saves every later change there. */
+-- 
+2.55.0.windows.3
+

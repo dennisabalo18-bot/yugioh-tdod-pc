@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Grabar mascotas</title>
+<style>
+  body { margin: 0; background: #222; color: #ddd; font: 14px sans-serif; }
+  #estado { padding: 8px; }
+  canvas { background: repeating-conic-gradient(#555 0 25%, #333 0 50%) 0 0 / 20px 20px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="estado">cargando...</div>
+<script type="module">
+// Perfil (2026-11-16): each mascot's idle animation, seen from where the
+// game's battle camera A looks at it, framed to its size, on a clear
+// background; pictures of LADO px sent to visor.py (/api/cuadro), which keeps
+// them in modding/texturas/perfil/crudo, and how long each shows (/api/info).
+// 2026-11-16 (the user: "hacela como se ve en el juego"): the model's own
+// speed, still (no sway), 60 a second (at most MAXF: a longer loop fewer).
+// grabar.html?m=0,57,34 (the model numbers; perfil.py gives the list).
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+const LADO = 768, FPS = 60, MAXF = 240;
+const estado = t => { document.getElementById("estado").textContent = t; };
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(LADO, LADO);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);
+document.body.appendChild(renderer.domElement);
+
+const escena = new THREE.Scene();
+escena.add(new THREE.HemisphereLight(0xffffff, 0x776655, 2.8));
+const sol = new THREE.DirectionalLight(0xfff2dd, 2.4);
+escena.add(sol);
+const camara = new THREE.PerspectiveCamera(35, 1, 0.5, 20000);
+const cargador = new GLTFLoader();
+
+async function api(ruta, cuerpo) {
+  const r = await fetch(ruta, cuerpo ? { method: "POST", body: JSON.stringify(cuerpo) } : undefined);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+const cargar = url => new Promise((ok, mal) => cargador.load(url, ok, undefined, mal));
+
+async function grabar(n) {
+  const m = "m" + String(n).padStart(3, "0");
+  const { url } = await api("/api/original?m=" + m);
+  const cam = await api("/api/camara?m=" + m);
+  const gl = await cargar(url);
+  // 2026-11-16: the game's texture animation (igb_gltf.py extras "uvanim":
+  // the eyes' blink of the Tomato, the Sage's staff) and its additive parts
+  const anims = [], vistos = new Set();
+  gl.scene.traverse(o => {
+    if (o.isMesh) {
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(x => {
+        x.side = THREE.DoubleSide;
+        if ('metalness' in x) { x.metalness = 0; x.roughness = 0.75; }
+        if (vistos.has(x)) return;
+        vistos.add(x);
+        const ex = x.userData || {};
+        if (ex.blend === "add") { x.blending = THREE.AdditiveBlending; x.transparent = true; x.depthWrite = false; }
+        if (ex.uvanim && x.map) { x.map = x.map.clone(); x.map.needsUpdate = true; anims.push({ tex: x.map, a: ex.uvanim }); }
+      });
+      o.frustumCulled = false;
+    }
+  });
+  const clave = (k, t, def) => {          // keys [time, value, interp]: 0 step, 1 linear
+    if (!k || !k.length) return def;
+    let i = 0;
+    while (i + 1 < k.length && k[i + 1][0] <= t) i++;
+    const a = k[i], b = k[i + 1];
+    if (b && a[2] === 1 && b[0] > a[0]) return a[1] + (b[1] - a[1]) * (t - a[0]) / (b[0] - a[0]);
+    return a[1];
+  };
+  const moverUV = t => {
+    for (const { tex, a } of anims) {
+      const tt = a.dur > 0 ? t % a.dur : t;
+      tex.offset.set(clave(a.u, tt, 0), clave(a.v, tt, 0));
+      tex.repeat.set(clave(a.su, tt, 1), clave(a.sv, tt, 1));
+    }
+  };
+  const pivote = new THREE.Group();
+  pivote.add(gl.scene);
+  escena.add(pivote);
+  const clip = gl.animations[0];
+  const mixer = clip ? new THREE.AnimationMixer(gl.scene) : null;
+  if (mixer) mixer.clipAction(clip).play();
+  const dur = clip ? clip.duration : 3;
+  const T = dur * Math.max(1, Math.round(2 / dur));        // the whole loop, seamless, about 2 s or more
+  const FRAMES = Math.max(2, Math.min(MAXF, Math.round(T * FPS)));
+  // the size over the loop (the pose moves): the box of a few moments
+  const caja = new THREE.Box3();
+  for (let i = 0; i < 8; i++) {
+    if (mixer) mixer.setTime(T * i / 8);
+    gl.scene.updateMatrixWorld(true);
+    caja.union(new THREE.Box3().setFromObject(gl.scene, true));
+  }
+  const centro = caja.getCenter(new THREE.Vector3()), tam = caja.getSize(new THREE.Vector3());
+  pivote.position.set(-centro.x, -centro.y, -centro.z);
+  // the battle camera's direction (A), its distance to fit the model
+  // 2026-11-16 (the user: "cambia la camara para algunos como el golem ...
+  // para que se vean de frente"): the battle camera A showed some from the
+  // side or from above; all from the front now (the models face +Z), a
+  // little turned and from a little above, so the body has depth
+  // grabar.html?vista=frente: kept apart (crudo_frente), perfil.py takes
+  // from there the ones listed in perfil/camaras.txt; else the battle's A
+  const YAW = THREE.MathUtils.degToRad(15), ELEV = THREE.MathUtils.degToRad(12);
+  let dir = new THREE.Vector3(Math.sin(YAW) * Math.cos(ELEV), Math.sin(ELEV), Math.cos(YAW) * Math.cos(ELEV));
+  if (!FRENTE) {
+    dir = new THREE.Vector3(cam.A.pos[0] - cam.A.destino[0], cam.A.pos[1] - cam.A.destino[1],
+                            cam.A.pos[2] - cam.A.destino[2]).normalize();
+    if (!isFinite(dir.x) || dir.lengthSq() < 0.5) dir.set(0, 0.25, 1).normalize();
+  }
+  const radio = 0.5 * Math.hypot(tam.x, tam.y, tam.z);
+  const dist = radio / Math.sin(THREE.MathUtils.degToRad(camara.fov / 2)) * 1.5;   // 2026-11-16: far enough that nothing is cut (the user: some came out cut); perfil.py crops
+  camara.position.copy(dir.multiplyScalar(dist));
+  camara.up.set(0, 1, 0);
+  camara.lookAt(0, 0, 0);
+  camara.near = dist / 50; camara.far = dist * 10;
+  camara.updateProjectionMatrix();
+  sol.position.copy(camara.position).add(new THREE.Vector3(dist * 0.6, dist, 0));
+  const giro = new THREE.Group();
+  escena.add(giro);
+  giro.add(pivote);
+  if (VER) {                          // grabar.html?m=N&ver=1: one model kept, to look at it
+    if (mixer) mixer.setTime(0);
+    moverUV(0);
+    renderer.render(escena, camara);
+    window.ver = { gl, mixer, T, anims, moverUV, render: () => renderer.render(escena, camara), escena, camara };
+    return;
+  }
+  for (let f = 0; f < FRAMES; f++) {
+    if (mixer) mixer.setTime(T * f / FRAMES);
+    moverUV(T * f / FRAMES);
+    renderer.render(escena, camara);
+    await api("/api/cuadro", { nombre: m + "_" + String(f).padStart(3, "0"), png: renderer.domElement.toDataURL("image/png"), carpeta: FRENTE ? "frente" : "" });
+  }
+  await api("/api/info", { nombre: m, frames: FRAMES, ms: T * 1000 / FRAMES, carpeta: FRENTE ? "frente" : "" });
+  escena.remove(giro);
+  // 2026-11-16 (Meteor Dragon's ball white only in the 70 in a row): each
+  // model's textures and buffers are let go, or the GPU runs out and the
+  // later models' textures come out white
+  const tex = new Set();
+  gl.scene.traverse(o => {
+    if (o.isMesh) {
+      o.geometry.dispose();
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(x => {
+        for (const k in x) if (x[k] && x[k].isTexture) tex.add(x[k]);
+        x.dispose();
+      });
+    }
+    if (o.isSkinnedMesh && o.skeleton) o.skeleton.dispose();
+  });
+  tex.forEach(t => t.dispose());
+  renderer.renderLists.dispose();
+}
+
+const VER = new URLSearchParams(location.search).get("ver");
+const FRENTE = new URLSearchParams(location.search).get("vista") === "frente";
+const lista = (new URLSearchParams(location.search).get("m") || "").split(",").filter(x => x).map(Number);
+const hechos = [], fallas = [];
+for (const n of lista) {
+  estado("grabando m" + n + " (" + (hechos.length + fallas.length + 1) + " de " + lista.length + ")");
+  // 2026-11-16: a model that failed half way stayed in the scene (the
+  // Summoned Skull over every later one): whatever it left is taken out,
+  // and it is tried once more
+  let ok = false;
+  for (let intento = 0; intento < 2 && !ok; intento++) {
+    try { await grabar(n); ok = true; } catch (e) { if (intento) fallas.push(n + ": " + e.message); }
+    for (const c of [...escena.children]) if (!c.isLight) escena.remove(c);
+  }
+  if (ok) hechos.push(n);
+}
+estado("LISTO " + hechos.length + " de " + lista.length + (fallas.length ? " | fallas: " + fallas.join("; ") : ""));
+window.listo = { hechos, fallas };
+</script>
+</body>
+</html>

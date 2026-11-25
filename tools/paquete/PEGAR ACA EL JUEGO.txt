@@ -1,0 +1,8 @@
+﻿Copiá acá tu copia de Yu-Gi-Oh! The Dawn of Destiny de Xbox, descomprimida.
+Si tenés una ISO, arrastrala sobre "Instalar juego desde ISO.bat" (en la carpeta de arriba).
+
+Tiene que quedar default.xbe dentro de esta carpeta (o dentro de una carpeta adentro de esta),
+junto con las carpetas bg, card, cf_anim, duel, effect, ending, euro, menu, monster, posteffect y sound.
+
+Tiene que ser la versión EUROPEA (PAL) de Xbox: su default.xbe pesa 7.254.016 bytes.
+Este paquete no trae ningún archivo del juego: necesitás tu propia copia.

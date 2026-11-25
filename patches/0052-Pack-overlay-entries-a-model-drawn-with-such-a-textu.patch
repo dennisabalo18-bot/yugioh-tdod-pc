@@ -1,0 +1,368 @@
+From e339218154fbdab3b3e3c8c17c6372fbe840beab Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Wed, 4 Nov 2026 16:25:40 -0300
+Subject: [PATCH 52/74] Pack overlay entries: a model drawn with such a texture
+ is replaced by a flat picture in the keyboard style
+
+nv2a_tex_pack_find_overlay (hash ^ KBMOUSE1, kind BUTTON). The D3D11 backend skips the model's batches, runs their vertices through the CPU interpreter for the screen box, and draws the picture there once a flip (last flip's box). Fixed-function batches are drawn as they are.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/nv2a_pb_d3d11.c    | 262 +++++++++++++++++++++++++++++++++++++
+ src/kernel/nv2a_tex_pack.c |  20 +++
+ src/kernel/nv2a_tex_pack.h |   7 +
+ 3 files changed, 289 insertions(+)
+
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 11299d7..7779c7e 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -1788,6 +1788,10 @@ typedef struct {
+     struct nv2a_tex_pack_entry *pack_wait;
+     uint64_t hash;
+     int      live;
++    /* rdr-port: nv2a_tex_pack_find_overlay for hash under pack_gen ovr_gen. */
++    uint64_t ovr_for;
++    uint32_t ovr_gen;
++    struct nv2a_tex_pack_entry *ovr;
+     /* What tex holds: the guest size, or a pack entry's (textures.pack);
+      * a re-upload of another size or format makes a new texture. */
+     uint32_t tex_w, tex_h, tex_levels;
+@@ -2938,6 +2942,13 @@ static int aspect_quad(struct aspect_batch *hp, const struct nv2a_pb_vsh *v, Ren
+     return bars && nv2a_aspect_band((const float (*)[2])xy, hp->count, rt->w, rt->h, bars);
+ }
+ 
++/* rdr-port: set by setup_pixel, the picture that replaces this batch's
++ * model (nv2a_tex_pack_find_overlay), or NULL. */
++static struct nv2a_tex_pack_entry *s_ovr_entry;
++static int overlay_replace(const struct nv2a_pb_draw *d, const struct nv2a_pb_vsh *v,
++                           RenderTarget *rt, int place, uint32_t lo, uint32_t count,
++                           unsigned inputs);
++
+ static ID3D11PixelShader *setup_pixel(struct aspect_batch *hp)
+ {
+     const struct nv2a_pb_vsh *v = nv2a_pb_vsh_state();
+@@ -3038,6 +3049,23 @@ static ID3D11PixelShader *setup_pixel(struct aspect_batch *hp)
+         memcpy(lm.srv, srv, sizeof srv);
+         memcpy(lm.src, s_stage_src, sizeof lm.src);
+     }
++    /* rdr-port: a stage whose texture a flat picture replaces in the
++     * keyboard style (overlay_replace). */
++    s_ovr_entry = NULL;
++    if (nv2a_tex_pack_count() && nv2a_tex_pack_button_style() == 0) {
++        uint32_t gen = nv2a_tex_pack_gen();
++        for (n = 0; n < 4 && !s_ovr_entry; n++) {
++            TexEntry *e = lm.e[n];
++            if (!e || !s_stage[n].mode || s_stage[n].mode == 4 || s_stage_rt[n])
++                continue;
++            if (e->ovr_for != e->hash || e->ovr_gen != gen || !e->ovr_for) {
++                e->ovr = nv2a_tex_pack_find_overlay(e->hash);
++                e->ovr_for = e->hash;
++                e->ovr_gen = gen;
++            }
++            s_ovr_entry = e->ovr;
++        }
++    }
+     hp->place = NV2A_PLACE_CENTRE;
+     if (s_cur && s_cur->pad) {
+         int guest_tex = 0, flat_rt = 0, padded_rt = 0;
+@@ -4373,6 +4401,11 @@ static void d3d11_on_draw(const struct nv2a_pb_draw *d)
+             s_draws_skipped++;
+             return;
+         }
++        if (s_ovr_entry && overlay_replace(d, v, rt, hp.place, lo, count, vs->inputs)) {
++            s_cur = NULL;
++            s_draws_skipped++;
++            return;
++        }
+         rt_copy_mark(rt);
+         if (hp.place != NV2A_PLACE_CENTRE)
+             s_draws_stretch++;
+@@ -4928,6 +4961,235 @@ static void menu_present(void)
+     s_sc_init = 0;
+ }
+ 
++/* ---- rdr-port: a model replaced by a flat picture ----------------------------
++ * In the keyboard style the tutorial's 3D Xbox controller is not drawn: its
++ * batches (any batch sampling a texture with a pack overlay entry,
++ * nv2a_tex_pack_find_overlay) are skipped, and the picture (a keyboard and a
++ * mouse) is drawn once a flip, at the first such batch, over the screen box
++ * the model covered: last flip's box, every batch's vertices run through the
++ * CPU vertex interpreter (this flip's so far when there is none). Without
++ * depth, in the batch's own target: what the game draws later (the text)
++ * stays on top. A fixed-function batch has no program to run: it is drawn
++ * as it is. */
++static const char s_ovr_ps_src[] =
++    "Texture2D t0 : register(t0); SamplerState s0 : register(s0);\n"
++    "float4 main(float4 p : SV_Position, float2 t : TEXCOORD0) : SV_Target {\n"
++    "    return t0.Sample(s0, t);\n"
++    "}\n";
++static struct {
++    ID3D11PixelShader        *ps;
++    ID3D11BlendState         *bs;
++    ID3D11SamplerState       *smp;
++    ID3D11Texture2D          *tex;
++    ID3D11ShaderResourceView *srv;
++    const struct nv2a_tex_pack_entry *for_e;
++    int      failed, logged;
++    uint64_t flip;              /* the flip cur gathers (flips + 1; 0 none) */
++    float    cur[4], prev[4];   /* host pixels x0 y0 x1 y1 */
++    int      cur_ok, prev_ok;
++    uint64_t drawn;             /* flips + 1 the picture was drawn in */
++} s_ovr;
++
++static int overlay_resources(const struct nv2a_tex_pack_entry *e)
++{
++    if (s_ovr.failed)
++        return 0;
++    if (!s_ovr.ps) {
++        ID3DBlob *code = NULL;
++        D3D11_BLEND_DESC bd;
++        D3D11_SAMPLER_DESC sd;
++        s_ovr.failed = 1;
++        if (!blit_init() || !compile("rdr_overlay_ps", s_ovr_ps_src, "ps_5_0", &code))
++            return 0;
++        ID3D11Device_CreatePixelShader(s_dev, ID3D10Blob_GetBufferPointer(code),
++                                       ID3D10Blob_GetBufferSize(code), NULL, &s_ovr.ps);
++        ID3D10Blob_Release(code);
++        memset(&bd, 0, sizeof bd);
++        bd.RenderTarget[0].BlendEnable = TRUE;
++        bd.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
++        bd.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
++        bd.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
++        bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
++        bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
++        bd.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
++        bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
++        memset(&sd, 0, sizeof sd);
++        sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
++        sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
++        sd.MaxLOD = D3D11_FLOAT32_MAX;
++        if (!s_ovr.ps || FAILED(ID3D11Device_CreateBlendState(s_dev, &bd, &s_ovr.bs))
++                || FAILED(ID3D11Device_CreateSamplerState(s_dev, &sd, &s_ovr.smp)))
++            return 0;
++        s_ovr.failed = 0;
++    }
++    if (s_ovr.for_e != e) {
++        D3D11_TEXTURE2D_DESC td;
++        D3D11_SUBRESOURCE_DATA sub[16];
++        const uint32_t *px = nv2a_tex_pack_texels_async((struct nv2a_tex_pack_entry *)e);
++        uint32_t lv, w = e->width, h = e->height, levels = e->levels;
++        size_t at = 0;
++        if (!px)
++            return 0;                       /* being read: next time */
++        if (s_ovr.srv) ID3D11ShaderResourceView_Release(s_ovr.srv);
++        if (s_ovr.tex) ID3D11Texture2D_Release(s_ovr.tex);
++        s_ovr.srv = NULL;
++        s_ovr.tex = NULL;
++        s_ovr.for_e = NULL;
++        if (!levels || levels > 16)
++            levels = 1;
++        for (lv = 0; lv < levels; lv++) {
++            uint32_t lw = w >> lv ? w >> lv : 1, lh = h >> lv ? h >> lv : 1;
++            if (at + (size_t)lw * lh > e->texels) {
++                levels = lv ? lv : 1;
++                break;
++            }
++            sub[lv].pSysMem = px + at;
++            sub[lv].SysMemPitch = lw * 4u;
++            sub[lv].SysMemSlicePitch = 0;
++            at += (size_t)lw * lh;
++        }
++        memset(&td, 0, sizeof td);
++        td.Width = w;
++        td.Height = h;
++        td.MipLevels = levels;
++        td.ArraySize = 1;
++        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
++        td.SampleDesc.Count = 1;
++        td.Usage = D3D11_USAGE_IMMUTABLE;
++        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++        if (FAILED(ID3D11Device_CreateTexture2D(s_dev, &td, sub, &s_ovr.tex))
++                || FAILED(ID3D11Device_CreateShaderResourceView(
++                       s_dev, (ID3D11Resource *)s_ovr.tex, NULL, &s_ovr.srv))) {
++            s_ovr.failed = 1;
++            return 0;
++        }
++        s_ovr.for_e = e;
++    }
++    return 1;
++}
++
++/* The picture, its aspect kept, centred in box (host pixels of rt). */
++static void overlay_draw(RenderTarget *rt, const struct nv2a_tex_pack_entry *e, const float box[4])
++{
++    ID3D11ShaderResourceView *none = NULL;
++    D3D11_VIEWPORT vp;
++    D3D11_MAPPED_SUBRESOURCE m;
++    float bw = box[2] - box[0], bh = box[3] - box[1], w, h;
++    float uv[4] = {1.0f, 1.0f, 0.0f, 0.0f};
++
++    if (bw < 2.0f || bh < 2.0f || !overlay_resources(e))
++        return;
++    w = bw;
++    h = bw * (float)e->height / (float)e->width;
++    if (h > bh) {
++        h = bh;
++        w = bh * (float)e->width / (float)e->height;
++    }
++    vp.TopLeftX = box[0] + (bw - w) * 0.5f;
++    vp.TopLeftY = box[1] + (bh - h) * 0.5f;
++    vp.Width = w;
++    vp.Height = h;
++    vp.MinDepth = 0.0f;
++    vp.MaxDepth = 1.0f;
++    if (FAILED(ID3D11DeviceContext_Map(s_ctx, (ID3D11Resource *)s_blit_cb, 0,
++                                       D3D11_MAP_WRITE_DISCARD, 0, &m)))
++        return;
++    memcpy(m.pData, uv, sizeof uv);
++    ID3D11DeviceContext_Unmap(s_ctx, (ID3D11Resource *)s_blit_cb, 0);
++    rt_copy_mark(rt);
++    ID3D11DeviceContext_OMSetRenderTargets(s_ctx, 1, &rt->rtv, NULL);
++    ID3D11DeviceContext_RSSetViewports(s_ctx, 1, &vp);
++    ID3D11DeviceContext_RSSetState(s_ctx, s_rs[0][0]);
++    ID3D11DeviceContext_OMSetBlendState(s_ctx, s_ovr.bs, NULL, 0xFFFFFFFF);
++    ID3D11DeviceContext_OMSetDepthStencilState(s_ctx, s_ds_off, 0);
++    ID3D11DeviceContext_IASetInputLayout(s_ctx, NULL);
++    ID3D11DeviceContext_IASetPrimitiveTopology(s_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++    ID3D11DeviceContext_VSSetShader(s_ctx, s_blit_vs, NULL, 0);
++    ID3D11DeviceContext_VSSetConstantBuffers(s_ctx, 0, 1, &s_blit_cb);
++    ID3D11DeviceContext_PSSetShader(s_ctx, s_ovr.ps, NULL, 0);
++    ID3D11DeviceContext_PSSetShaderResources(s_ctx, 0, 1, &s_ovr.srv);
++    ID3D11DeviceContext_PSSetSamplers(s_ctx, 0, 1, &s_ovr.smp);
++    ID3D11DeviceContext_Draw(s_ctx, 3, 0);
++    ID3D11DeviceContext_PSSetShaderResources(s_ctx, 0, 1, &none);
++    ID3D11DeviceContext_OMSetBlendState(s_ctx, NULL, NULL, 0xFFFFFFFF);
++    s_sc_init = 0;                      /* every binding went behind the shadow */
++    rt->last_draw = ++s_seq;
++}
++
++/* 1: the batch is replaced (skip it); 0: draw it as it is. */
++static int overlay_replace(const struct nv2a_pb_draw *d, const struct nv2a_pb_vsh *v,
++                           RenderTarget *rt, int place, uint32_t lo, uint32_t count,
++                           unsigned inputs)
++{
++    const struct nv2a_pb_gpu *g = nv2a_pb_gpu_state();
++    const struct nv2a_tex_pack_entry *e = s_ovr_entry;
++    struct nv2a_vp_consts vc;
++    float in[NV2A_VSH_INPUTS][4], box[4] = {0, 0, 0, 0};
++    Nv2aVshOut out;
++    uint64_t now = g->flips + 1u;
++    uint32_t k;
++    unsigned i;
++    int any = 0;
++
++    if (!d->program) {
++        if (!(s_ovr.logged & 1)) {
++            s_ovr.logged |= 1;
++            fprintf(stderr, LOGP "overlay: a fixed-function batch, drawn as it is\n");
++        }
++        return 0;
++    }
++    if (s_ovr.flip != now) {
++        s_ovr.prev_ok = s_ovr.cur_ok && s_ovr.flip + 1u == now;
++        memcpy(s_ovr.prev, s_ovr.cur, sizeof s_ovr.cur);
++        s_ovr.cur_ok = 0;
++        s_ovr.flip = now;
++    }
++    nv2a_vp_consts_fill(v, g->format, rt->w, rt->h, rt->pad, &vc);
++    nv2a_aspect_map(&vc, rt->w, rt->h, rt->pad, place);
++    vc.c[0] *= (float)nv2a_aa_x(g->format);
++    vc.c[1] *= (float)nv2a_aa_y(g->format);
++    for (k = 0; k < count; k++) {
++        const float *p = out.o[NV2A_VSH_O_POS];
++        float x, y;
++        memset(in, 0, sizeof in);
++        for (i = 0; i < NV2A_VSH_INPUTS && i < NV2A_VS_MAX_INPUTS; i++)
++            if (inputs & (1u << i))
++                vtx_input(d, v, i, lo + k, in[i]);
++        nv2a_vsh_run((const uint32_t (*)[4])v->prog, v->start, (float (*)[4])(uintptr_t)v->c, 0,
++                     (const float (*)[4])in, &out);
++        if (!out.ok || !(p[3] > 0.0f) || !isfinite(p[0]) || !isfinite(p[1]))
++            continue;
++        x = ((p[0] * vc.c[0] + vc.c[4]) + 1.0f) * 0.5f * (float)rt->hw;
++        y = (1.0f - (p[1] * vc.c[1] + vc.c[5])) * 0.5f * (float)rt->hh;
++        if (!any || x < box[0]) box[0] = x;
++        if (!any || y < box[1]) box[1] = y;
++        if (!any || x > box[2]) box[2] = x;
++        if (!any || y > box[3]) box[3] = y;
++        any = 1;
++    }
++    if (any) {
++        if (!s_ovr.cur_ok) {
++            memcpy(s_ovr.cur, box, sizeof box);
++            s_ovr.cur_ok = 1;
++        } else {
++            if (box[0] < s_ovr.cur[0]) s_ovr.cur[0] = box[0];
++            if (box[1] < s_ovr.cur[1]) s_ovr.cur[1] = box[1];
++            if (box[2] > s_ovr.cur[2]) s_ovr.cur[2] = box[2];
++            if (box[3] > s_ovr.cur[3]) s_ovr.cur[3] = box[3];
++        }
++    }
++    if (!(s_ovr.logged & 2)) {
++        s_ovr.logged |= 2;
++        fprintf(stderr, LOGP "overlay: model replaced by a %ux%u picture (box %.0f,%.0f-%.0f,%.0f"
++                " of %ux%u)\n", e->width, e->height, box[0], box[1], box[2], box[3], rt->hw, rt->hh);
++    }
++    if (s_ovr.drawn != now && (s_ovr.prev_ok || s_ovr.cur_ok)) {
++        s_ovr.drawn = now;
++        overlay_draw(rt, e, s_ovr.prev_ok ? s_ovr.prev : s_ovr.cur);
++    }
++    return 1;
++}
++
+ #ifdef XBOXRECOMP_ENHANCE
+ static struct nv2a_rect s_ovl_place;    /* the overlay's: the frame in the back buffer */
+ #endif
+diff --git a/src/kernel/nv2a_tex_pack.c b/src/kernel/nv2a_tex_pack.c
+index 7383ca6..5932d15 100644
+--- a/src/kernel/nv2a_tex_pack.c
++++ b/src/kernel/nv2a_tex_pack.c
+@@ -419,6 +419,26 @@ struct nv2a_tex_pack_entry *nv2a_tex_pack_find_button(uint64_t hash, uint32_t gu
+     return e;
+ }
+ 
++struct nv2a_tex_pack_entry *nv2a_tex_pack_find_overlay(uint64_t hash)
++{
++    unsigned m = atomic_load_explicit(&s_mask, memory_order_relaxed);
++    uint64_t key = hash ^ NV2A_TEX_PACK_OVERLAY_SALT;
++    unsigned lo = 0, hi = s_count;
++    if (!(m & PACK_ON))
++        return NULL;
++    while (lo < hi) {
++        unsigned mid = lo + (hi - lo) / 2;
++        if (s_entries[mid].hash < key)
++            lo = mid + 1;
++        else if (s_entries[mid].hash > key)
++            hi = mid;
++        else
++            return s_entries[mid].kind == XRTP_KIND_BUTTON && !s_entries[mid].bc3
++                   ? &s_entries[mid] : NULL;
++    }
++    return NULL;
++}
++
+ struct nv2a_tex_pack_entry *nv2a_tex_pack_find(uint64_t hash, uint32_t guest_w,
+                                                uint32_t guest_h)
+ {
+diff --git a/src/kernel/nv2a_tex_pack.h b/src/kernel/nv2a_tex_pack.h
+index 7b5ecf9..f2dd99e 100644
+--- a/src/kernel/nv2a_tex_pack.h
++++ b/src/kernel/nv2a_tex_pack.h
+@@ -119,6 +119,13 @@ uint64_t nv2a_tex_pack_button_key(uint64_t hash, int style, int art);
+ /* The kind BUTTON entry of (hash, aspect) for the style and F6 now, or NULL. */
+ struct nv2a_tex_pack_entry *nv2a_tex_pack_find_button(uint64_t hash, uint32_t guest_w,
+                                                       uint32_t guest_h);
++/* rdr-port: a model drawn with a guest texture of this hash is replaced in
++ * the keyboard style by a flat picture: the kind BUTTON entry keyed
++ * hash ^ NV2A_TEX_PACK_OVERLAY_SALT (any aspect), or NULL. The backend
++ * skips the model's batches and draws the picture over the box they cover
++ * (the tutorial's 3D controller -> a keyboard and mouse). */
++#define NV2A_TEX_PACK_OVERLAY_SALT 0x4B424D4F55534531ull   /* "KBMOUSE1" */
++struct nv2a_tex_pack_entry *nv2a_tex_pack_find_overlay(uint64_t hash);
+ /* Hits of nv2a_tex_pack_find, for the backends' statistics. */
+ uint64_t nv2a_tex_pack_hits(void);
+ 
+-- 
+2.55.0.windows.3
+

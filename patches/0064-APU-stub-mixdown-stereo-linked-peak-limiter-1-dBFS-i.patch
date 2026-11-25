@@ -1,0 +1,68 @@
+From 06a87d4eea30e1e9057f9951439fe5efbb996de3 Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 01:58:32 -0300
+Subject: [PATCH 64/74] APU stub mixdown: stereo-linked peak limiter (-1 dBFS,
+ instant attack, 50 ms release) before the clamp; RDR_APU_LIMITER=0 turns it
+ off
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/apu/apu_dsp.c | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
+index f90a75b..b4c2407 100644
+--- a/src/apu/apu_dsp.c
++++ b/src/apu/apu_dsp.c
+@@ -380,6 +380,39 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+  * mixbin that carried signal, with the bin's submix headroom. That is the
+  * divisor for 2D voices only: the VP divides a 3D voice's first four bins by
+  * hrtf_headroom instead (apu_vp.c), printed once as hrtf_hr. */
++/* rdr-port: the stub's mixdown is a plain sum of up to 32 bins, so a loud
++ * moment (gunfire over music over speech) ran past full scale and the clamp
++ * below squared the peaks off: players heard it as loud, distorted sound.
++ * A stereo-linked peak limiter now takes the gain down at once for a peak
++ * over -1 dB and lets it back up over about 150 ms, so the clamp is not
++ * reached; quieter passages pass untouched. RDR_APU_LIMITER=0 turns it off
++ * (A/B). */
++static float s_lim_gain = 1.0f;
++
++static int limiter_on(void)
++{
++    static int on = -1;
++    if (on < 0) {
++        const char *e = getenv("RDR_APU_LIMITER");
++        on = !(e && *e == '0');
++    }
++    return on;
++}
++
++static void limit(float *l, float *r)
++{
++    const float thr = 0.891f;                       /* -1 dBFS */
++    const float rel = 1.0f / (0.050f * 48000.0f);   /* 50 ms time constant: ~95 % back in 150 ms */
++    float pk = fabsf(*l) > fabsf(*r) ? fabsf(*l) : fabsf(*r);
++    float want = pk > thr ? thr / pk : 1.0f;
++    if (want < s_lim_gain)
++        s_lim_gain = want;                          /* attack: at once */
++    else
++        s_lim_gain += (want - s_lim_gain) * rel;    /* release: smooth */
++    *l *= s_lim_gain;
++    *r *= s_lim_gain;
++}
++
+ static void dsp_bin_stats(MCPXAPUState *d,
+                           float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
+ {
+@@ -488,6 +521,8 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+                 left = mixbins[0][i];
+                 right = mixbins[1][i];
+             }
++            if (limiter_on())
++                limit(&left, &right);
+             /* Clamp to [-1, 1] range */
+             if (left > 1.0f) left = 1.0f;
+             if (left < -1.0f) left = -1.0f;
+-- 
+2.55.0.windows.3
+

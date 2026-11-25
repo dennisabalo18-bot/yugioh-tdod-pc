@@ -1,0 +1,115 @@
+From 4ec956e3cc574b9247c26a731b0574214e57df1d Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 00:48:50 -0300
+Subject: [PATCH 57/74] Ultrawide 21:9 (43:18): widescreen value 2, present and
+ first window at 43:18; F2 choice; 3440x1440 window size
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/host_menu.c      |  9 +++++----
+ src/d3d/nv2a_pb_d3d11.c  | 11 +++++++----
+ src/kernel/kernel_xbox.c |  7 ++++---
+ 3 files changed, 16 insertions(+), 11 deletions(-)
+
+diff --git a/src/d3d/host_menu.c b/src/d3d/host_menu.c
+index 7729316..97565d8 100644
+--- a/src/d3d/host_menu.c
++++ b/src/d3d/host_menu.c
+@@ -77,8 +77,9 @@ static void __attribute__((unused)) set_aspect(int i)
+  * picks its 720x480 16:9 mode at boot and widens its 3D and HUD itself. The
+  * hor+ padding (display.aspect, get_aspect) stays out of the menu: on this
+  * title it did nothing visible. */
+-static const char *const k_wide[] = { "No (4:3)", "Sí (nativo del juego)", NULL };
+-static int get_wide(void) { return xbox_VideoWidescreen() != 0; }
++/* rdr-port: 21:9 is the same view widened further (rdr-apex widescreen.c). */
++static const char *const k_wide[] = { "No (4:3)", "Sí (nativo del juego)", "21:9 (ultrapanorámico)", NULL };
++static int get_wide(void) { return xbox_VideoWidescreen(); }
+ static void set_wide(int i) { xbox_VideoWidescreenSet(i); }
+ 
+ /* XC_LANGUAGE (kernel.h): the title picks its text and voices at boot. */
+@@ -114,7 +115,7 @@ static void set_lang(int i)
+ static const char *const k_window[] = {
+     "Libre", "640x480", "800x600", "960x720", "1024x768", "1280x720", "1280x960",
+     "1366x768", "1440x1080", "1600x900", "1600x1200", "1920x1080", "2560x1080",
+-    "2560x1440", "3840x2160", NULL
++    "2560x1440", "3440x1440", "3840x2160", NULL
+ };
+ static int s_window;
+ static void set_full(int i);
+@@ -184,7 +185,7 @@ static void set_speed(int i) { xbox_SpeedSet(1u << i); }
+ static const xbox_menu_item k_builtin[] = {
+     { NULL, "Gráficos", NULL, NULL, NULL },
+     { "render_scale", "Resolución interna", k_scale, get_scale, set_scale },
+-    { "widescreen", "Panorámico 16:9 (al reiniciar)", k_wide, get_wide, set_wide },
++    { "widescreen", "Panorámico (al reiniciar)", k_wide, get_wide, set_wide },
+     { "window", "Tamaño de ventana", k_window, get_window, set_window },
+     { "fullscreen", "Pantalla completa (F11)", k_onoff, get_full, set_full },
+     { "aniso", "Filtrado anisotrópico", k_aniso, get_aniso, set_aniso },
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 11299d7..0e174a2 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -639,7 +639,10 @@ static void create_black_texture(void);
+ /* rdr-port: a widescreen TV reported to the title (xbox_VideoWidescreen,
+  * kernel.h): the title draws its 16:9 view anamorphic into its 480-line
+  * frame, as for a widescreen TV. The present shows such a frame at 16:9
+- * (wide_frame) and the window starts 16:9. */
++ * (wide_frame) and the window starts 16:9; ultrawide (2) is the same at
++ * 43:18 (3440x1440). */
++static unsigned wide_aw(void) { extern int xbox_VideoWidescreen(void); return xbox_VideoWidescreen() == 2 ? 43u : 16u; }
++static unsigned wide_ah(void) { extern int xbox_VideoWidescreen(void); return xbox_VideoWidescreen() == 2 ? 18u : 9u; }
+ static int wide_tv(void)
+ {
+     extern int xbox_VideoWidescreen(void);
+@@ -662,7 +665,7 @@ static int init(void)
+     wchar_t title[192];
+     /* display.aspect: a window of the padded frame's shape (854x480 at
+      * 16:9), so the pads are on screen at 1:1. */
+-    RECT r = {0, 0, (LONG)(wide_tv() ? 854u : nv2a_host_window_w(640, 480, 1)), 480};
++    RECT r = {0, 0, (LONG)(wide_tv() ? (480u * wide_aw() + wide_ah() / 2u) / wide_ah() : nv2a_host_window_w(640, 480, 1)), 480};
+     int full = nv2a_host_opts()->fullscreen;
+     int internal = nv2a_host_opts()->present_surface == NV2A_PRESENT_SURFACE_INTERNAL;
+     UINT bw = (UINT)r.right, bh = 480;
+@@ -4955,8 +4958,8 @@ static void present_blit(RenderTarget *rt, int filter, unsigned overscan, int in
+     hch = ch * rt->n;
+     nv2a_present_crop(hcw, hch, rt->hw, rt->hh, rt->n, rt->pad, overscan, filter, &c);
+     if (wide_frame(rt)) {
+-        /* anamorphic: shown 16:9, scaled smoothly */
+-        c.fit_w = (c.fit_h * 16u + 4u) / 9u;
++        /* anamorphic: shown 16:9 (or 43:18), scaled smoothly */
++        c.fit_w = (c.fit_h * wide_aw() + wide_ah() / 2u) / wide_ah();
+         if (filter == NV2A_PRESENT_INTEGER)
+             filter = NV2A_PRESENT_LINEAR;
+     }
+diff --git a/src/kernel/kernel_xbox.c b/src/kernel/kernel_xbox.c
+index 36baeba..adf88e3 100644
+--- a/src/kernel/kernel_xbox.c
++++ b/src/kernel/kernel_xbox.c
+@@ -14,20 +14,21 @@
+ #include <string.h>
+ #include <time.h>
+ 
+-/* rdr-port: a widescreen display wanted (kernel.h). Not reported through
++/* rdr-port: a widescreen display wanted (kernel.h): 0 none (4:3), 1 16:9,
++ * 2 ultrawide (43:18, 3440x1440 and the like). Not reported through
+  * XC_VIDEO (see there); read by the D3D11 present and the title port. */
+ static int s_widescreen = -1;
+ 
+ void xbox_VideoWidescreenSet(int on)
+ {
+-    s_widescreen = on != 0;
++    s_widescreen = on < 0 ? 0 : on > 2 ? 2 : on;
+ }
+ 
+ int xbox_VideoWidescreen(void)
+ {
+     if (s_widescreen < 0) {
+         const char *e = getenv("RECOMP_WIDESCREEN");
+-        s_widescreen = e && *e == '1';
++        s_widescreen = e && (*e == '1' || *e == '2') ? *e - '0' : 0;
+     }
+     return s_widescreen;
+ }
+-- 
+2.55.0.windows.3
+

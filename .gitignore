@@ -1,0 +1,48 @@
+# The game itself (copyrighted; each user supplies their own dump).
+/xbe/
+*.xbe
+*.iso
+*.xiso
+
+# Derived from the game: regenerated from your own copy (see README).
+/analysis/
+/ygo-apex/src/recomp/gen/
+# headers with the game's own pictures (pointer glove, fonts, damage digits),
+# made by tools/guante.py, fuente_juego.py, fuente_titulo.py, danio_digitos.py
+/ygo-apex/src/raton_guante.h
+/ygo-apex/src/fuente_juego.h
+/ygo-apex/src/fuente_titulo.h
+/ygo-apex/src/fuente_titulo4.h
+/ygo-apex/src/danio_digitos.h
+/ygo-apex/mods_puntero/
+/ygo-apex/fotos_cursor/
+/modding/*
+!/modding/*.bat
+
+# Build output, logs, captures and the player's own files.
+/ygo-apex/build/
+/ygo-apex/build_viejo_C/
+/ygo-apex/runs/
+/ygo-apex/ygo_menu.ini
+*.log
+build_log*.txt
+escalado_log.txt
+*.exe
+*.dll
+*.obj
+*.pdb
+*.ilk
+*.pak
+*.ico
+__pycache__/
+/third_party/
+/dist/
+/Ajustes/
+/Partidas/
+/respaldos/
+/trailer/
+/fondo_lumis_melchid.png
+version.txt
+/tools/visor_modelos/*.webp
+/tools/kanji_luz.png
+/tools/launcher/yugioh.png

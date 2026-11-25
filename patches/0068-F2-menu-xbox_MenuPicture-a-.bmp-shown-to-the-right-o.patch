@@ -1,0 +1,123 @@
+From 9bf9d87fa4f8c517858e9688c619504841e77b1d Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 02:37:28 -0300
+Subject: [PATCH 68/74] F2 menu: xbox_MenuPicture, a .bmp shown to the right of
+ the rows (as tall as them)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/host_menu.c | 60 +++++++++++++++++++++++++++++++++++++++++++++
+ src/d3d/host_menu.h |  2 ++
+ 2 files changed, 62 insertions(+)
+
+diff --git a/src/d3d/host_menu.c b/src/d3d/host_menu.c
+index b328891..7862f88 100644
+--- a/src/d3d/host_menu.c
++++ b/src/d3d/host_menu.c
+@@ -528,6 +528,30 @@ out:
+ static char      s_toast[96];
+ static ULONGLONG s_toast_until;
+ 
++/* rdr-port: a picture beside the rows (the controller with the player's
++ * keys, controles.bmp, drawn by Configuración.exe), from a row's set():
++ * a path shows it (read again each time, so a new one shows), NULL hides
++ * it. A missing file shows s_pic_missing instead. */
++static HBITMAP s_pic;
++static int     s_pic_on;
++static unsigned s_pic_gen;
++static unsigned s_list_w;             /* the rows' width; the picture is right of it */
++static const char *s_pic_missing = "Elegí las teclas en Configuración.exe";
++
++void xbox_MenuPicture(const char *bmp_path)
++{
++    if (s_pic) {
++        DeleteObject(s_pic);
++        s_pic = NULL;
++    }
++    s_pic_on = bmp_path != NULL;
++    if (bmp_path)
++        s_pic = (HBITMAP)LoadImageA(NULL, bmp_path, IMAGE_BITMAP, 0, 0,
++                                    LR_LOADFROMFILE | LR_CREATEDIBSECTION);
++    s_pic_gen++;
++    s_sig = 0;
++}
++
+ void xbox_MenuSetTranslator(const char *(*tr)(const char *utf8))
+ {
+     s_tr = tr;
+@@ -657,9 +681,24 @@ const uint32_t *xbox_MenuPixels(unsigned back_h, unsigned *w, unsigned *h, unsig
+             W = w_need;
+     }
+     H = pad * 2u + row * 2u + (unsigned)s_n * row + row * 3u / 2u;
++    {
++        /* rdr-port: the picture to the right, as tall as the rows */
++        unsigned list_w = W, pw = 0;
++        if (s_pic_on) {
++            BITMAP bm;
++            if (s_pic && GetObject(s_pic, sizeof bm, &bm) && bm.bmHeight > 0)
++                pw = (unsigned)((unsigned long long)(H - 2u * pad) * (unsigned)bm.bmWidth
++                                / (unsigned)bm.bmHeight);
++            else
++                pw = fpx * 22u;
++            W = list_w + pw + pad;
++        }
++        s_list_w = list_w;
++    }
+ 
+     /* Redraw only when something shown moved. */
+     sig = (sig ^ fpx) * 16777619u;
++    sig = (sig ^ s_pic_gen) * 16777619u;
+     sig = (sig ^ (unsigned)s_sel) * 16777619u;
+     for (i = 0; i < s_n; i++)
+         sig = (sig ^ (unsigned)(s_items[i]->choices ? s_items[i]->get() + 1 : 0)) * 16777619u;
+@@ -672,6 +711,9 @@ const uint32_t *xbox_MenuPixels(unsigned back_h, unsigned *w, unsigned *h, unsig
+ 
+     fill(0, 0, (int)W, (int)H, RGB(18, 14, 12));
+     fill(0, 0, (int)W, 3, RGB(170, 70, 40));
++    {
++        unsigned W_all = W;
++        W = s_list_w;
+     SelectObject(s_dc, s_font_big);
+     text((int)pad, (int)pad, (int)(W - 2 * pad), (int)row, TR("AJUSTES"), DT_LEFT, RGB(235, 195, 125));
+     SelectObject(s_dc, s_font_small);
+@@ -703,6 +745,24 @@ const uint32_t *xbox_MenuPixels(unsigned back_h, unsigned *w, unsigned *h, unsig
+     SelectObject(s_dc, s_font_small);
+     text((int)pad, y + (int)row / 4, (int)(W - 2 * pad), (int)row,
+          TR("↑↓ elegir   ←→ cambiar   (se guarda solo)"), DT_LEFT, RGB(150, 140, 130));
++        W = W_all;
++    }
++    if (s_pic_on) {
++        int px0 = (int)s_list_w, ph = (int)(H - 2u * pad), pw2 = (int)W - px0 - (int)pad;
++        if (s_pic) {
++            HDC m = CreateCompatibleDC(s_dc);
++            BITMAP bm;
++            GetObject(s_pic, sizeof bm, &bm);
++            SelectObject(m, s_pic);
++            SetStretchBltMode(s_dc, HALFTONE);
++            SetBrushOrgEx(s_dc, 0, 0, NULL);
++            StretchBlt(s_dc, px0, (int)pad, pw2, ph, m, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
++            DeleteDC(m);
++        } else {
++            SelectObject(s_dc, s_font);
++            text(px0, (int)pad, pw2, ph, TR(s_pic_missing), DT_CENTER, RGB(225, 185, 120));
++        }
++    }
+     GdiFlush();
+     /* GDI leaves alpha at 0: the whole panel at 92%. */
+     for (i = 0; i < (int)(W * H); i++)
+diff --git a/src/d3d/host_menu.h b/src/d3d/host_menu.h
+index bd4f084..8dc71eb 100644
+--- a/src/d3d/host_menu.h
++++ b/src/d3d/host_menu.h
+@@ -38,6 +38,8 @@ void xbox_MenuSetTranslator(const char *(*tr)(const char *utf8));
+  * a language in the panel (not when rdr_menu.ini is loaded), so the panel
+  * can follow it at once. Calling xbox_MenuSetTranslator again redraws. */
+ void xbox_MenuSetLanguageHook(void (*cb)(const char *code));
++/* rdr-port: a picture (a .bmp) beside the rows, or NULL to hide it. */
++void xbox_MenuPicture(const char *bmp_path);
+ /* Adds a row (the struct is kept by pointer: give it static storage). */
+ void xbox_MenuAdd(const xbox_menu_item *it);
+ /* Applies the choices saved in path and saves every later change there. */
+-- 
+2.55.0.windows.3
+

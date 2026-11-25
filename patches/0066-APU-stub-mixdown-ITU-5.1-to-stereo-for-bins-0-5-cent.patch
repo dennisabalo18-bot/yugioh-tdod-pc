@@ -1,0 +1,44 @@
+From c74ecf782f5c6dccce014e5c35e013c0681464fd Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 02:10:19 -0300
+Subject: [PATCH 66/74] APU stub mixdown: ITU 5.1-to-stereo for bins 0-5
+ (centre and surrounds -3 dB, LFE -6 dB, to both sides) instead of
+ even-left/odd-right
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/apu/apu_dsp.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
+index 2c327a6..0b373d9 100644
+--- a/src/apu/apu_dsp.c
++++ b/src/apu/apu_dsp.c
+@@ -521,8 +521,22 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+                     float s = mixbins[b][i];
+                     if (mode == MIXDOWN_STAGED)
+                         s *= mixbin_gain(b);
+-                    if (b & 1) right += s;
+-                    else       left  += s;
++                    /* rdr-port: bins 0-5 are DirectSound's 5.1 speakers (FL,
++                     * FR, C, LFE, SL, SR). Even-left/odd-right put the centre
++                     * (Red Dead Revolver's dialogue, measured in bin 2) in the
++                     * left ear only and the LFE (bin 3) in the right only. The
++                     * ITU stereo downmix instead: centre and surrounds at
++                     * -3 dB, LFE at -6 dB, to both sides as they belong. */
++                    if (b == 2 || b == 3) {
++                        s *= b == 2 ? 0.7071f : 0.5f;
++                        left += s;
++                        right += s;
++                    } else {
++                        if (b == 4 || b == 5)
++                            s *= 0.7071f;
++                        if (b & 1) right += s;
++                        else       left  += s;
++                    }
+                 }
+             } else {
+                 left = mixbins[0][i];
+-- 
+2.55.0.windows.3
+

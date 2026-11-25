@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Visor de modelos</title>
+<style>
+  :root { --fondo:#16181d; --panel:#20232b; --borde:#323743; --texto:#e6e6e6; --tenue:#9aa0ac; --acento:#e0b84c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--fondo); color:var(--texto); font:14px system-ui, sans-serif; display:flex; height:100vh; overflow:hidden; }
+  #panel { width:330px; flex:none; background:var(--panel); border-right:1px solid var(--borde); padding:12px; overflow-y:auto; }
+  #vista { flex:1; position:relative; }
+  #vista canvas { display:block; position:absolute; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--tenue); margin:16px 0 6px; }
+  h2:first-child { margin-top:0; }
+  select, input[type=number], button, input[type=text] { font:inherit; color:var(--texto); background:#2a2e38; border:1px solid var(--borde); border-radius:6px; padding:5px 8px; }
+  select { width:100%; }
+  .fila { display:grid; grid-template-columns:62px 1fr 64px; gap:8px; align-items:center; margin:6px 0; }
+  .fila input[type=range] { width:100%; }
+  .fila input[type=number] { width:64px; padding:4px; }
+  .nota { color:var(--tenue); font-size:12px; line-height:1.4; }
+  .botones { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--acento); }
+  button.principal { background:var(--acento); color:#1a1a1a; border-color:var(--acento); font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  label.chk { display:flex; gap:6px; align-items:center; margin:3px 0; cursor:pointer; }
+  #estado { white-space:pre-wrap; font:12px ui-monospace, monospace; color:var(--tenue); background:#1a1c22; border:1px solid var(--borde); border-radius:6px; padding:8px; margin-top:10px; max-height:180px; overflow:auto; }
+  #rango { color:var(--acento); font-weight:600; }
+  .etiqueta { color:#fff; font-size:12px; background:rgba(0,0,0,.55); padding:2px 6px; border-radius:4px; white-space:nowrap; }
+  .regla { color:#8a8f99; font-size:11px; }
+  #vistas { position:absolute; top:10px; left:10px; display:flex; gap:6px; z-index:2; }
+  #ayuda { position:absolute; bottom:10px; left:10px; z-index:2; color:var(--tenue); font-size:12px; background:rgba(0,0,0,.4); padding:4px 8px; border-radius:4px; }
+  .cambiado { color:var(--acento); }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="panel">
+  <h2>Modelo</h2>
+  <select id="sel"></select>
+  <div class="nota" id="info"></div>
+
+  <h2>Ajuste <span id="avisoCambio" class="cambiado"></span></h2>
+  <div class="fila"><span>Alto</span><input type="range" id="r_alto" min="3" max="40" step="0.5"><input type="number" id="n_alto" step="0.5"></div>
+  <div class="fila"><span>Suelo</span><input type="range" id="r_suelo" min="-5" max="25" step="0.5"><input type="number" id="n_suelo" step="0.5"></div>
+  <div class="fila"><span>Izq. / Der.</span><input type="range" id="r_derecha" min="-15" max="15" step="0.5"><input type="number" id="n_derecha" step="0.5"></div>
+  <div class="nota">Izq. / Der.: positivo corre el modelo a la derecha, negativo a la izquierda (0 = centrado).</div>
+  <div class="fila"><span>Girar</span><input type="range" id="r_girar" min="-180" max="180" step="5"><input type="number" id="n_girar" step="5"></div>
+  <div class="nota">Girar: grados sobre su eje vertical (positivo lo gira hacia la izquierda visto desde arriba; 0 = como vino).</div>
+  <label class="chk"><input type="checkbox" id="cuerpo"> Centrar por el cuerpo (--cuerpo; se ve al armar)</label>
+  <div class="nota">Queda de <span id="rango"></span> de alto. Lo que movés se ve al instante; "Armar" lo guarda en el .igb.</div>
+  <div class="botones">
+    <button class="principal" id="b_armar">Armar</button>
+    <button id="b_volver">Volver a lo armado</button>
+    <button id="b_deshacer">Deshacer último armado</button>
+  </div>
+  <div class="botones"><button id="b_copiar">Copiar al juego</button></div>
+
+  <div id="panelBat" style="display:none">
+    <h2>Batalla (como en el juego)</h2>
+    <div class="fila"><span>Cámara</span><input type="range" id="tcam" min="0" max="45" step="1" value="0"><span id="tcamTxt">0/45</span></div>
+    <div class="botones"><button id="b_play">Reproducir el movimiento</button></div>
+    <label class="chk"><input type="checkbox" id="panor" checked> Estirado a 16:9 (opción "Panorámico" del port)</label>
+    <div class="nota">Cada monstruo con la cámara de su número de modelo (tabla del juego): el tuyo en los 3/4 izquierdos, el rival en los 3/4 derechos con su cámara espejada. La cámara va del cuadro 0 al 45.</div>
+  </div>
+
+  <h2>Rival rápido (vista Batalla)</h2>
+  <div class="botones">
+    <button data-rival="m918">Tomate de Mystic</button>
+    <button data-rival="m587">Florero viviente</button>
+    <button data-rival="m122">Planta oscura</button>
+  </div>
+
+  <h2>Comparar con</h2>
+  <div id="refs"></div>
+  <div class="botones">
+    <input type="text" id="t_orig" placeholder="m402" size="6">
+    <button id="b_orig">Agregar original</button>
+  </div>
+  <div class="nota">Los originales son los modelos del juego (monster/…/mNNN.igb). Todos en la misma escala.</div>
+
+  <h2>Animación</h2>
+  <label class="chk"><input type="checkbox" id="anim" checked> Reposo animado</label>
+
+  <div id="estado">Cargando…</div>
+</div>
+<div id="vista">
+  <div id="vistas">
+    <button id="v_comp">Comparar de frente</button>
+    <button id="v_bat">Batalla</button>
+    <button id="v_centrar">Centrar como el juego</button>
+  </div>
+  <div id="ayuda">Arrastrá para girar · rueda para acercar · clic derecho para mover</div>
+</div>
+
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
+
+const $ = id => document.getElementById(id);
+const estado = t => { $("estado").textContent = t; };
+
+// ---- escena ----------------------------------------------------------------
+const vista = $("vista");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+vista.appendChild(renderer.domElement);
+const etiquetas = new CSS2DRenderer();
+etiquetas.domElement.style.cssText = "position:absolute;top:0;left:0;pointer-events:none";
+vista.appendChild(etiquetas.domElement);
+
+const escena = new THREE.Scene();
+escena.background = new THREE.Color(0x1d2027);
+escena.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.6));
+const sol = new THREE.DirectionalLight(0xffffff, 1.6);
+sol.position.set(30, 60, 80);
+escena.add(sol);
+
+const camara = new THREE.PerspectiveCamera(40, 1, 0.5, 2000);
+const control = new OrbitControls(camara, renderer.domElement);
+control.enableDamping = true;
+
+// Los datos del juego ya son de mano derecha para glTF (el monstruo mira a +Z
+// y su izquierda es +X): mirandolo de frente, +X queda a la derecha de la
+// pantalla. (Antes se espejaba X: la espada de Isaac salia del lado contrario.)
+const mundo = new THREE.Group();
+escena.add(mundo);
+
+const piso = new THREE.GridHelper(400, 80, 0x3a3f4b, 0x2a2e37);
+mundo.add(piso);
+const regla = new THREE.Group();
+mundo.add(regla);
+
+function hacerRegla(desde, hasta) {
+  regla.traverse(o => { if (o.isCSS2DObject) o.element.remove(); });
+  regla.clear();
+  const mat = new THREE.LineBasicMaterial({ color: 0x4a505d, transparent: true, opacity: 0.7 });
+  for (let y = 5; y <= 45; y += 5) {
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(desde, y, -2), new THREE.Vector3(hasta, y, -2)]);
+    regla.add(new THREE.Line(g, mat));
+    const d = document.createElement("div");
+    d.className = "regla"; d.textContent = y;
+    const e = new CSS2DObject(d);
+    e.position.set(desde - 2, y, -2);
+    regla.add(e);
+  }
+}
+
+function ajustarTam() {
+  let w = vista.clientWidth, h = vista.clientHeight, x = 0, y = 0;
+  if (modoVista === "bat") {          // la pantalla del juego: 640x480, o estirada a 16:9
+    const asp = $("panor").checked ? 16 / 9 : 4 / 3;
+    const ww = Math.min(w, h * asp), hh = ww / asp;
+    x = (w - ww) / 2; y = (h - hh) / 2; w = ww; h = hh;
+  }
+  renderer.setSize(w, h);
+  etiquetas.setSize(w, h);
+  for (const el of [renderer.domElement, etiquetas.domElement]) {
+    el.style.left = x + "px"; el.style.top = y + "px"; el.style.width = w + "px"; el.style.height = h + "px";
+  }
+  camara.aspect = w / h;
+  camara.updateProjectionMatrix();
+}
+addEventListener("resize", ajustarTam);
+let modoVista = "comp";
+ajustarTam();
+
+// ---- modelos -----------------------------------------------------------------
+const cargador = new GLTFLoader();
+const relojes = [];
+function cargar(url, nombre) {
+  return new Promise((ok, mal) => cargador.load(url, gl => {
+    const raiz = new THREE.Group();
+    gl.scene.traverse(o => {
+      if (o.isMesh) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach(m => { m.side = THREE.DoubleSide; });
+        o.frustumCulled = false;
+      }
+    });
+    raiz.add(gl.scene);
+    let mixer = null;
+    if (gl.animations.length) {
+      mixer = new THREE.AnimationMixer(gl.scene);
+      mixer.clipAction(gl.animations[0]).play();
+      relojes.push(mixer);
+    }
+    const d = document.createElement("div");
+    d.className = "etiqueta"; d.textContent = nombre;
+    const et = new CSS2DObject(d);
+    et.position.set(0, -2.5, 0);
+    raiz.add(et);
+    raiz.userData = { mixer, etiqueta: d };
+    ok(raiz);
+  }, undefined, mal));
+}
+
+// sacar un modelo: sus etiquetas (divs) y su animacion tambien
+function soltar(g) {
+  g.traverse(o => { if (o.isCSS2DObject) o.element.remove(); });
+  const m = g.userData.mixer;
+  if (m) relojes.splice(relojes.indexOf(m), 1);
+  g.removeFromParent();
+}
+
+async function api(ruta, cuerpo) {
+  const r = await fetch(ruta, cuerpo ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) } : {});
+  const j = await r.json();
+  if (!r.ok || j.error) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+let datos = null, actual = null, armado = null, propio = null;
+const refs = new Map();   // clave -> {grupo, nombre}
+
+// ---- ajuste en vivo ----------------------------------------------------------
+// armar_igb.py escala el modelo alrededor de (0, suelo, 0) y despues lo corre
+// "derecha" en X. Con el armado (a0, s0, d0) a la vista, otro (a, s, d) es:
+// escala k = a/a0, posicion (d - d0*k, s - s0*k, 0).
+function leerAjuste() {
+  return { alto: +$("n_alto").value, suelo: +$("n_suelo").value, derecha: +$("n_derecha").value, girar: +$("n_girar").value || 0, cuerpo: $("cuerpo").checked };
+}
+function ponerAjuste(a) {
+  for (const k of ["alto", "suelo", "derecha", "girar"]) { $("r_" + k).value = a[k] || 0; $("n_" + k).value = a[k] || 0; }
+  $("cuerpo").checked = !!a.cuerpo;
+  aplicarVivo();
+}
+function aplicarVivo() {
+  const a = leerAjuste();
+  $("rango").textContent = `${a.suelo} a ${+(a.suelo + a.alto).toFixed(2)}`;
+  if (propio && armado) {
+    // el giro (sobre el eje vertical del modelo, en x = derecha) va relativo al armado
+    const k = a.alto / armado.alto, g = (a.girar - (armado.girar || 0)) * Math.PI / 180;
+    propio.scale.setScalar(k);
+    propio.rotation.y = g;
+    propio.position.set(a.derecha - armado.derecha * k * Math.cos(g), a.suelo - armado.suelo * k, armado.derecha * k * Math.sin(g));
+  }
+  const cambio = armado && (a.alto !== armado.alto || a.suelo !== armado.suelo || a.derecha !== armado.derecha || a.girar !== (armado.girar || 0) || a.cuerpo !== !!armado.cuerpo);
+  $("avisoCambio").textContent = cambio ? "· sin armar" : "";
+}
+for (const k of ["alto", "suelo", "derecha", "girar"]) {
+  $("r_" + k).addEventListener("input", () => { $("n_" + k).value = $("r_" + k).value; aplicarVivo(); });
+  $("n_" + k).addEventListener("input", () => { $("r_" + k).value = $("n_" + k).value; aplicarVivo(); });
+}
+$("cuerpo").addEventListener("change", aplicarVivo);
+
+// ---- disposicion ---------------------------------------------------------------
+const SEP = 34;
+function ordenar() {
+  const lista = [propio, ...[...refs.values()].map(r => r.grupo)].filter(Boolean);
+  if (modoVista === "comp") {
+    lista.forEach((g, i) => {
+      const base = g === propio ? null : g;
+      if (base) { base.position.set(i * SEP, 0, 0); base.rotation.y = 0; }
+    });
+    if (propio) { propio.parent.position.set(0, 0, 0); propio.parent.rotation.y = 0; }
+    hacerRegla(-SEP / 2, Math.max(1, lista.length) * SEP - SEP / 2);
+  } else {
+    // batalla: cada monstruo en el origen, sin girar, como lo dibuja el juego
+    contPropio.position.set(0, 0, 0); contPropio.rotation.y = 0;
+    for (const r of refs.values()) { r.grupo.position.set(0, 0, 0); r.grupo.rotation.y = 0; }
+    regla.traverse(o => { if (o.isCSS2DObject) o.element.remove(); });
+    regla.clear();
+  }
+}
+// el numero de modelo de una referencia ("o:m587" o "p:carpeta")
+function modeloDe(k) {
+  return k.startsWith("o:") ? k.slice(2) : (datos.cartas.find(c => c.carpeta === k.slice(2)) || {}).m;
+}
+
+// ---- la batalla del juego ------------------------------------------------------
+// Sacado del codigo del juego (2026-11-13):
+// - sub_0005A670 guarda el numero de modelo; sub_0005A810 toma la camara con
+//   ese indice de una tabla de 1000 (default.xbe 0x42A718, una por modelo:
+//   destino, posicion y arriba de A y de B) y sub_000585E0 la lleva de A a B
+//   en 45 cuadros; sub_000583A0 la aplica (al rival, con la X de la posicion y
+//   del destino por -1).
+// - sub_00059AA0: perspectiva de 45 grados en una textura de 480x480.
+// - sub_00057D60: esa textura va en la pantalla de 640x480 en x 0..480 (el
+//   atacante) y en x 160..640 (el atacado), de arriba a abajo.
+// El juego no agranda ni achica los monstruos: van en sus unidades, en el origen.
+const camBat = new THREE.PerspectiveCamera(45, 1, 1, 10000);
+const tablaCam = {};
+async function camaraDe(m) {
+  if (!m) return null;
+  if (!tablaCam[m]) tablaCam[m] = await api("/api/camara?m=" + m);
+  return tablaCam[m];
+}
+let camPropio = null, camRival = null, grupoRival = null;
+async function prepararBatalla() {
+  camPropio = actual ? await camaraDe(actual.m) : null;
+  const k = [...refs.keys()][0];
+  grupoRival = k ? refs.get(k).grupo : null;
+  camRival = k ? await camaraDe(modeloDe(k)) : null;
+}
+function ponerCamara(c, t, espejo) {
+  const L = (a, b, i) => a[i] + (b[i] - a[i]) * t, s = espejo ? -1 : 1;
+  camBat.position.set(s * L(c.A.pos, c.B.pos, 0), L(c.A.pos, c.B.pos, 1), L(c.A.pos, c.B.pos, 2));
+  camBat.up.set(L(c.A.arriba, c.B.arriba, 0), L(c.A.arriba, c.B.arriba, 1), L(c.A.arriba, c.B.arriba, 2));
+  camBat.lookAt(s * L(c.A.destino, c.B.destino, 0), L(c.A.destino, c.B.destino, 1), L(c.A.destino, c.B.destino, 2));
+  camBat.aspect = 1;                  // la textura es cuadrada (se estira con la pantalla)
+  camBat.updateProjectionMatrix();
+}
+function dibujarBatalla() {
+  const sz = renderer.getSize(new THREE.Vector2()), W = sz.x, H = sz.y;
+  const t = +$("tcam").value / 45;
+  const todos = [contPropio, ...[...refs.values()].map(r => r.grupo)];
+  renderer.autoClear = false;
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, W, H);
+  const fondo = escena.background;
+  renderer.setClearColor(fondo);
+  renderer.clear();
+  escena.background = null;           // cada pasada no borra lo de la otra
+  renderer.setScissorTest(true);
+  const pasada = (grupo, cam, x0, espejo) => {
+    if (!grupo || !cam) return;
+    for (const g of todos) g.visible = g === grupo;
+    ponerCamara(cam, t, espejo);
+    const x = W * x0 / 640, w = W * 480 / 640;
+    renderer.setViewport(x, 0, w, H);
+    renderer.setScissor(x, 0, w, H);
+    renderer.clearDepth();
+    renderer.render(escena, camBat);
+  };
+  pasada(grupoRival, camRival, 160, true);
+  pasada(contPropio, camPropio, 0, false);
+  for (const g of todos) g.visible = true;
+  escena.background = fondo;
+  renderer.setScissorTest(false);
+  renderer.autoClear = true;
+}
+$("tcam").oninput = () => { $("tcamTxt").textContent = $("tcam").value + "/45"; };
+$("panor").onchange = ajustarTam;
+let reproduciendo = null;
+$("b_play").onclick = () => {
+  clearInterval(reproduciendo);
+  $("tcam").value = 0; $("tcam").oninput();
+  reproduciendo = setInterval(() => {
+    const v = +$("tcam").value + 1;
+    $("tcam").value = v; $("tcam").oninput();
+    if (v >= 45) clearInterval(reproduciendo);
+  }, 1000 / 60);
+};
+
+window.__v = { THREE, get propio() { return propio; }, refs, relojes };
+// depuracion: el render a 1920x1080 con fondo magenta, al servidor (_visor/_captura.png)
+window.capturar = async () => {
+  const fondo = escena.background;
+  escena.background = new THREE.Color(0xff00ff);
+  renderer.setSize(1920, 1080, false);
+  if (modoVista === "bat") dibujarBatalla();
+  else { camara.aspect = 16 / 9; camara.updateProjectionMatrix(); renderer.render(escena, camara); }
+  const png = renderer.domElement.toDataURL("image/png");
+  escena.background = fondo;
+  ajustarTam();
+  return api("/api/captura", { png });
+};
+function modo(m) {
+  modoVista = m;
+  const bat = m === "bat";
+  piso.visible = !bat;
+  control.enabled = !bat;
+  $("panelBat").style.display = bat ? "block" : "none";
+  $("ayuda").style.display = bat ? "none" : "";
+  etiquetas.domElement.style.display = bat ? "none" : "";
+  ajustarTam();
+}
+function vistaComparar() {
+  modo("comp"); ordenar();
+  const n = 1 + refs.size, cx = ((n - 1) * SEP) / 2;
+  control.target.set(cx, 13, 0);
+  camara.position.set(cx, 16, 20 + n * 22);
+  camara.fov = 40; camara.updateProjectionMatrix();
+}
+async function vistaBatalla() {
+  modo("bat");
+  ordenar();
+  try { await prepararBatalla(); } catch (e) { estado("Error con la cámara del juego: " + e.message); }
+}
+
+$("v_comp").onclick = vistaComparar;
+$("v_centrar").onclick = () => {
+  if (modoVista === "bat") { clearInterval(reproduciendo); $("tcam").value = 0; $("tcam").oninput(); }
+  else vistaComparar();
+};
+// rival rapido: deja solo ese modelo como rival y pasa a la vista Batalla
+for (const b of document.querySelectorAll("[data-rival]")) b.onclick = async () => {
+  for (const k of [...refs.keys()]) quitarRef(k);
+  await agregarRef("o:" + b.dataset.rival);
+  armarListaRefs();
+  vistaBatalla();
+};
+$("v_bat").onclick = vistaBatalla;
+
+// ---- carga de la carta elegida ----------------------------------------------------
+const contPropio = new THREE.Group();
+mundo.add(contPropio);
+
+async function elegir(carpeta) {
+  actual = datos.cartas.find(c => c.carpeta === carpeta);
+  armado = { ...actual.ajuste };
+  const o = actual.original;
+  $("info").innerHTML = `${actual.nombre} · <b>${actual.m}</b> (carpeta ${actual.carpeta})<br>` +
+    (o ? `Original ${actual.m}: de ${o.base} a ${o.alto}, ancho ${o.ancho}` : "Original sin medir") +
+    (armado.como ? `<br>Armado con --como=${armado.como} (alto ${armado.alto})` : "");
+  estado("Cargando " + actual.nombre + "…");
+  if (propio) soltar(propio);
+  propio = null;
+  try {
+    const { url } = await api("/api/propio?carpeta=" + encodeURIComponent(carpeta));
+    propio = await cargar(url, actual.nombre);
+    contPropio.add(propio);
+  } catch (e) { estado("Error: " + e.message); return; }
+  ponerAjuste(armado);
+  // el original que reemplaza, por defecto
+  for (const [k, r] of refs) { soltar(r.grupo); refs.delete(k); }
+  await agregarRef("o:" + actual.m);
+  armarListaRefs();
+  modoVista === "comp" ? vistaComparar() : vistaBatalla();
+  estado("Listo. " + actual.nombre + " armado con alto " + armado.alto + ", suelo " + armado.suelo + ", derecha " + armado.derecha + ".");
+}
+
+async function agregarRef(clave) {
+  if (refs.has(clave)) return;
+  const [tipo, val] = clave.split(":");
+  let url, nombre;
+  try {
+    if (tipo === "o") { url = (await api("/api/original?m=" + val)).url; nombre = "original " + val; }
+    else { url = (await api("/api/propio?carpeta=" + encodeURIComponent(val))).url; nombre = datos.cartas.find(c => c.carpeta === val).nombre; }
+    const g = await cargar(url, nombre);
+    mundo.add(g);
+    refs.set(clave, { grupo: g, nombre });
+    modoVista === "comp" ? vistaComparar() : vistaBatalla();
+  } catch (e) { estado("Error con " + val + ": " + e.message); }
+}
+function quitarRef(clave) {
+  const r = refs.get(clave);
+  if (!r) return;
+  soltar(r.grupo); refs.delete(clave);
+  ordenar();
+  modoVista === "comp" ? vistaComparar() : vistaBatalla();
+}
+
+function armarListaRefs() {
+  const div = $("refs");
+  div.innerHTML = "";
+  const opciones = [["o:" + actual.m, `Original que reemplaza (${actual.m})`]];
+  for (const c of datos.cartas) if (c.carpeta !== actual.carpeta && c.existe) opciones.push(["p:" + c.carpeta, c.nombre + " (propio)"]);
+  for (const k of refs.keys()) if (k.startsWith("o:") && k !== "o:" + actual.m) opciones.push([k, "original " + k.slice(2)]);
+  for (const [k, txt] of opciones) {
+    const l = document.createElement("label");
+    l.className = "chk";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = refs.has(k);
+    cb.onchange = () => cb.checked ? agregarRef(k) : quitarRef(k);
+    l.append(cb, txt);
+    div.append(l);
+  }
+}
+$("b_orig").onclick = async () => {
+  let m = $("t_orig").value.trim().toLowerCase();
+  if (/^\d+$/.test(m)) m = "m" + m.padStart(3, "0");
+  if (!/^m\d{3}$/.test(m)) { estado("Escribí un modelo como m402"); return; }
+  await agregarRef("o:" + m);
+  armarListaRefs();
+};
+
+// ---- botones ---------------------------------------------------------------------
+function ocupado(si) { for (const b of document.querySelectorAll("button")) b.disabled = si; }
+$("b_volver").onclick = () => ponerAjuste(armado);
+$("b_armar").onclick = async () => {
+  ocupado(true); estado("Armando el .igb…");
+  try {
+    const r = await api("/api/armar", { carpeta: actual.carpeta, ajuste: leerAjuste() });
+    actual.ajuste = r.ajuste; armado = { ...r.ajuste };
+    if (propio) soltar(propio);
+    propio = await cargar(r.url, actual.nombre);
+    contPropio.add(propio);
+    ponerAjuste(armado);
+    ordenar();
+    estado("Armado y guardado (el anterior quedó en anteriores/). Tabla actualizada.\n" + r.log + "\nFalta \"Copiar al juego\" para verlo en el juego.");
+  } catch (e) { estado("Error: " + e.message); }
+  ocupado(false);
+};
+$("b_deshacer").onclick = async () => {
+  if (!confirm("¿Volver al .igb anterior de " + actual.nombre + "?")) return;
+  ocupado(true);
+  try {
+    const r = await api("/api/deshacer", { carpeta: actual.carpeta });
+    datos = await api("/api/lista");
+    await elegir(actual.carpeta);
+    estado(r.aviso);
+  } catch (e) { estado("Error: " + e.message); }
+  ocupado(false);
+};
+$("b_copiar").onclick = async () => {
+  ocupado(true); estado("Armando el mod y copiando al juego (cerrá el juego antes)…");
+  try {
+    const r = await api("/api/copiar", {});
+    estado((r.ok ? "LISTO: copiado al juego.\n\n" : "No se copió (¿el juego está abierto?).\n\n") + r.log);
+  } catch (e) { estado("Error: " + e.message); }
+  ocupado(false);
+};
+
+// ---- inicio -------------------------------------------------------------------------
+const reloj = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = reloj.getDelta();
+  if ($("anim").checked) for (const m of relojes) m.update(dt);
+  control.update();
+  if (modoVista === "bat") dibujarBatalla();
+  else { renderer.render(escena, camara); etiquetas.render(escena, camara); }
+});
+
+try {
+  datos = await api("/api/lista");
+  const sel = $("sel");
+  for (const c of datos.cartas) {
+    const o = document.createElement("option");
+    o.value = c.carpeta; o.textContent = `${c.nombre} (${c.m})` + (c.existe ? "" : " — sin .igb");
+    sel.append(o);
+  }
+  sel.onchange = () => elegir(sel.value);
+  let guardado = null;
+  try { guardado = localStorage.getItem("visor_carpeta"); } catch {}
+  if (guardado && datos.cartas.some(c => c.carpeta === guardado)) sel.value = guardado;
+  sel.addEventListener("change", () => { try { localStorage.setItem("visor_carpeta", sel.value); } catch {} });
+  await elegir(sel.value);
+} catch (e) { estado("Error al cargar la lista: " + e.message); }
+</script>
+</body>
+</html>

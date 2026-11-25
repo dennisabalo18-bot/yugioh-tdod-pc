@@ -1,0 +1,75 @@
+From 07d168ebc2d32aa4a13fea2d9b80bca847acb233 Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 01:49:35 -0300
+Subject: [PATCH 62/74] Replaced movies: the boot's first movie makes the D3D11
+ device at the poll (it fell back to the game's Bink); a request not picked up
+ in 5 s falls back
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/nv2a_pb_d3d11.c | 27 ++++++++++++++++++++-------
+ 1 file changed, 20 insertions(+), 7 deletions(-)
+
+diff --git a/src/d3d/nv2a_pb_d3d11.c b/src/d3d/nv2a_pb_d3d11.c
+index 1d26a38..8eb265a 100644
+--- a/src/d3d/nv2a_pb_d3d11.c
++++ b/src/d3d/nv2a_pb_d3d11.c
+@@ -6110,7 +6110,7 @@ static int d3d11_on_report(uint32_t va)
+ #pragma comment(lib, "xinput.lib")
+ #include "movie_mf.h"
+ 
+-static volatile LONG s_movie_state;    /* 0 idle, 1 asked, 2 played, 3 failed */
++static volatile LONG s_movie_state;    /* 0 idle, 1 asked, 2 played, 3 failed, 4 playing */
+ /* rdr-port: F2 / launcher "Videos pregrabados": 0 the movie's own shape
+  * (4:3, bars at the sides on a wide screen), 1 fill the screen (scaled up
+  * to cover it, the top and bottom cropped). */
+@@ -6315,18 +6315,30 @@ static int movie_run(const wchar_t *path)
+ }
+ 
+ /* The title's thread: 1 when path played here, 0 when it could not be
+- * (no D3D11 device yet, none with video support, or the file would not
+- * open). Blocks until the movie is over. */
++ * (no device with video support, or the file would not open). Blocks until
++ * the movie is over.
++ * rdr-port: the boot's first movie (rslogo) is asked for before the title
++ * has drawn a frame, so before init() made the device: it used to fall back
++ * to the game's Bink, whose sound is silent on some PCs that early. The
++ * poll now makes the device for it. A request no poll picks up in 5 s is
++ * withdrawn (the game's own movie plays, as before) so the boot never
++ * hangs on it. */
+ int nv2a_d3d11_movie(const char *path)
+ {
+-    if (!s_dev || !s_video_ok)
++    if (s_dev && !s_video_ok)
+         return 0;
+     if (!s_movie_done && !(s_movie_done = CreateEventA(NULL, FALSE, FALSE, NULL)))
+         return 0;
+     if (!MultiByteToWideChar(CP_ACP, 0, path, -1, s_movie_path, MAX_PATH))
+         return 0;
+     InterlockedExchange(&s_movie_state, 1);
+-    WaitForSingleObject(s_movie_done, INFINITE);
++    if (WaitForSingleObject(s_movie_done, 5000) != WAIT_OBJECT_0) {
++        if (InterlockedCompareExchange(&s_movie_state, 0, 1) == 1) {
++            fprintf(stderr, LOGP "movie not picked up in 5 s: the game's own\n");
++            return 0;
++        }
++        WaitForSingleObject(s_movie_done, INFINITE);    /* playing (4) */
++    }
+     return InterlockedExchange(&s_movie_state, 0) == 2;
+ }
+ 
+@@ -6334,8 +6346,9 @@ static void d3d11_on_poll(void)
+ {
+     if ((s_occ.npend || s_occ.nret) && s_dev)
+         nv2a_occ_settle(&s_occ);
+-    if (s_movie_state == 1) {
+-        InterlockedExchange(&s_movie_state, movie_run(s_movie_path) ? 2 : 3);
++    if (InterlockedCompareExchange(&s_movie_state, 4, 1) == 1) {
++        int ok = init() && s_video_ok && movie_run(s_movie_path);
++        InterlockedExchange(&s_movie_state, ok ? 2 : 3);
+         SetEvent(s_movie_done);
+     }
+ }
+-- 
+2.55.0.windows.3
+

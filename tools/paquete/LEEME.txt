@@ -1,0 +1,49 @@
+﻿YU-GI-OH! THE DAWN OF DESTINY - Port de PC
+==========================================
+
+IMPORTANTE: solo funciona con la versión EUROPEA (PAL) del juego de Xbox.
+Su default.xbe pesa 7.254.016 bytes. Con otra versión (NTSC de América o Japón)
+el juego lo avisa al arrancar y no se abre.
+Este paquete no trae ningún archivo del juego: necesitás tu propia copia legítima.
+
+QUÉ BAJAR
+  De GitHub (obligatorio):        YuGiOh-TDOD-PC.zip       el programa
+  De Google Drive (obligatorio):  YuGiOh-Contenido.zip     cartas nuevas, Perfil, mascotas,
+                                                           fundas, tapetes y buscador
+  De Google Drive (opcional):     YuGiOh-Texturas-HD.zip   texturas mejoradas (2,4 GB)
+                                  YuGiOh-Idioma-ES.zip     las texturas de tu idioma
+                                  (o -EN, -FR, -DE, -IT)   (solo el que vayas a usar);
+                                                           el de español trae las voces
+                                                           en español latino
+  Los zip de Drive se descomprimen TAL CUAL dentro de la carpeta del port (la que tiene
+  Yu-Gi-Oh.exe): cada uno ya trae su lugar (Mods-Extras\...).
+
+CÓMO INSTALAR
+1. Descomprimí YuGiOh-TDOD-PC.zip donde quieras.
+2. Poné tu juego de Xbox (versión europea) en la carpeta Game:
+     - si tenés la ISO, arrastrala sobre "Instalar juego desde ISO.bat";
+     - si ya está descomprimido, copiá sus archivos dentro de Game
+       (tiene que quedar default.xbe dentro de Game o de una carpeta adentro de Game).
+3. Descomprimí YuGiOh-Contenido.zip (y los opcionales que quieras) en la carpeta del port.
+4. Abrí Configuración.exe, elegí los ajustes y tocá JUGAR.
+   (También podés abrir Yu-Gi-Oh.exe directo.)
+
+En el juego:  F2 menú de ajustes   F6 texturas mejoradas sí/no   F7 pausa
+              F11 pantalla completa
+Mouse:        clic izquierdo elige, clic derecho vuelve, rueda recorre listas.
+Voces:        un clic llena el globo; doble clic corta la voz.
+
+Tus ajustes quedan en Ajustes\ y tus partidas en Partidas\, una carpeta por perfil
+(Partidas\<perfil>): la partida del juego, los respaldos y una carpeta por ranura
+(Ranura 1, Ranura 2...) con nombre, foto, historial de duelos, mazos ganados y cartas
+nuevas. Los perfiles se eligen y se crean en Configuración.exe (recuadro Perfil); desde
+ahí también se puede volver a un respaldo de la partida (botón Respaldos).
+Si actualizás el port (botón de Configuración o descomprimiendo una versión nueva
+encima), no se pierden.
+Para llevar un perfil a otra PC, copiá su carpeta de Partidas\.
+Para jugar en otra PC desde cero, copiá la carpeta sin Partidas\.
+
+Si el juego se cierra por un error, abrí Configuración y tocá "Informe de error":
+arma un .zip en el Escritorio para mandar (sin tu partida).
+
+extract-xiso es de in@fishtank.com (licencia en Herramientas\extract-xiso).

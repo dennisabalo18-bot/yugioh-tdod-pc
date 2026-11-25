@@ -1,0 +1,13 @@
+﻿Extras del port (se bajan de Google Drive). Cada zip se descomprime tal cual en la
+carpeta del port (la que tiene Yu-Gi-Oh.exe) y queda acá en su lugar.
+
+  Contenido\    OBLIGATORIO (YuGiOh-Contenido.zip): cartas nuevas, Perfil, mascotas,
+                fundas, tapetes, buscador y la placa AUTO. Contenido\juego\ son unos
+                pocos archivos del port que el juego copia solo a la carpeta del juego.
+  texturas\     opcional: textures_bc3.pack (YuGiOh-Texturas-HD.zip) y la de tu idioma
+                (textures_es.pack, _en, _fr, _de o _it; YuGiOh-Idioma-XX.zip).
+                F6 las prende y apaga.
+  voces\        viene con YuGiOh-Idioma-ES.zip: voces en español latino de los
+                duelistas; suenan con el juego en Español.
+
+El juego también busca en subcarpetas.

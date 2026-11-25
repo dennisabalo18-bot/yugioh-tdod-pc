@@ -1,0 +1,191 @@
+From 06bb759540c5e136dd736e82c6911e88f5f4641d Mon Sep 17 00:00:00 2001
+From: adrianelmanya76 <adrianelmanya76@gmail.com>
+Date: Fri, 6 Nov 2026 03:01:38 -0300
+Subject: [PATCH 69/74] F2 picture: capped at 34 text heights, scaled once with
+ HALFTONE, shown and hidden over 260 ms (panel widens, picture fades)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/d3d/host_menu.c | 127 +++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 101 insertions(+), 26 deletions(-)
+
+diff --git a/src/d3d/host_menu.c b/src/d3d/host_menu.c
+index 7862f88..1d93ee7 100644
+--- a/src/d3d/host_menu.c
++++ b/src/d3d/host_menu.c
+@@ -532,26 +532,88 @@ static ULONGLONG s_toast_until;
+  * keys, controles.bmp, drawn by Configuración.exe), from a row's set():
+  * a path shows it (read again each time, so a new one shows), NULL hides
+  * it. A missing file shows s_pic_missing instead. */
+-static HBITMAP s_pic;
+-static int     s_pic_on;
+-static unsigned s_pic_gen;
++static HBITMAP s_pic;                 /* the file as loaded */
++static HBITMAP s_pic_sc;              /* scaled once (HALFTONE) to the size shown */
++static unsigned s_pic_sw, s_pic_sh;
++static int     s_pic_on;              /* shown, or still fading out */
+ static unsigned s_list_w;             /* the rows' width; the picture is right of it */
++static unsigned s_pic_pw, s_pic_ph;   /* the size it is shown at, this frame */
++static double   s_pic_lv;             /* this frame's level, 0..1 */
+ static const char *s_pic_missing = "Elegí las teclas en Configuración.exe";
++/* rdr-port: shown and hidden over PIC_MS, eased: the panel widens and the
++ * picture fades in (and the other way), never at once. */
++#define PIC_MS 260.0
++static int       s_pic_want;          /* 1 shown, 0 hidden */
++static double    s_pic_from;          /* the level the current move started at */
++static ULONGLONG s_pic_t0;
++
++static double pic_level(void)
++{
++    double t = s_pic_t0 ? (double)(GetTickCount64() - s_pic_t0) / PIC_MS : 1.0;
++    if (t >= 1.0)
++        return s_pic_want;
++    t = t * t * (3.0 - 2.0 * t);      /* smoothstep */
++    return s_pic_from + (s_pic_want - s_pic_from) * t;
++}
++
++static void pic_free(void)
++{
++    if (s_pic) DeleteObject(s_pic);
++    if (s_pic_sc) DeleteObject(s_pic_sc);
++    s_pic = s_pic_sc = NULL;
++    s_pic_sw = s_pic_sh = 0;
++}
+ 
+ void xbox_MenuPicture(const char *bmp_path)
+ {
+-    if (s_pic) {
+-        DeleteObject(s_pic);
+-        s_pic = NULL;
+-    }
+-    s_pic_on = bmp_path != NULL;
+-    if (bmp_path)
++    s_pic_from = s_pic_on ? pic_level() : 0.0;
++    s_pic_t0 = GetTickCount64();
++    s_pic_want = bmp_path != NULL;
++    if (bmp_path) {
++        pic_free();                    /* read again: a new one shows */
+         s_pic = (HBITMAP)LoadImageA(NULL, bmp_path, IMAGE_BITMAP, 0, 0,
+                                     LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+-    s_pic_gen++;
++        s_pic_on = 1;
++    }
+     s_sig = 0;
+ }
+ 
++/* The picture at sw x sh, scaled once from the file with HALFTONE. */
++static HBITMAP pic_scaled(unsigned sw, unsigned sh)
++{
++    BITMAPINFO bi;
++    BITMAP bm;
++    void *bits = NULL;
++    HDC src, dst;
++    if (s_pic_sc && sw == s_pic_sw && sh == s_pic_sh)
++        return s_pic_sc;
++    if (s_pic_sc) DeleteObject(s_pic_sc);
++    s_pic_sc = NULL;
++    if (!s_pic || !GetObject(s_pic, sizeof bm, &bm))
++        return NULL;
++    memset(&bi, 0, sizeof bi);
++    bi.bmiHeader.biSize = sizeof bi.bmiHeader;
++    bi.bmiHeader.biWidth = (LONG)sw;
++    bi.bmiHeader.biHeight = -(LONG)sh;
++    bi.bmiHeader.biPlanes = 1;
++    bi.bmiHeader.biBitCount = 32;
++    bi.bmiHeader.biCompression = BI_RGB;
++    if (!(s_pic_sc = CreateDIBSection(s_dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0)))
++        return NULL;
++    src = CreateCompatibleDC(s_dc);
++    dst = CreateCompatibleDC(s_dc);
++    SelectObject(src, s_pic);
++    SelectObject(dst, s_pic_sc);
++    SetStretchBltMode(dst, HALFTONE);
++    SetBrushOrgEx(dst, 0, 0, NULL);
++    StretchBlt(dst, 0, 0, (int)sw, (int)sh, src, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
++    DeleteDC(src);
++    DeleteDC(dst);
++    s_pic_sw = sw;
++    s_pic_sh = sh;
++    return s_pic_sc;
++}
++
+ void xbox_MenuSetTranslator(const char *(*tr)(const char *utf8))
+ {
+     s_tr = tr;
+@@ -682,23 +744,35 @@ const uint32_t *xbox_MenuPixels(unsigned back_h, unsigned *w, unsigned *h, unsig
+     }
+     H = pad * 2u + row * 2u + (unsigned)s_n * row + row * 3u / 2u;
+     {
+-        /* rdr-port: the picture to the right, as tall as the rows */
++        /* rdr-port: the picture to the right, no taller than 34 text heights
++         * (as tall as the whole list it was stretched and soft), its room
++         * growing with pic_level() */
+         unsigned list_w = W, pw = 0;
+         if (s_pic_on) {
+             BITMAP bm;
++            double lv = pic_level();
++            unsigned ph = H - 2u * pad;
++            if (ph > fpx * 34u) ph = fpx * 34u;
+             if (s_pic && GetObject(s_pic, sizeof bm, &bm) && bm.bmHeight > 0)
+-                pw = (unsigned)((unsigned long long)(H - 2u * pad) * (unsigned)bm.bmWidth
+-                                / (unsigned)bm.bmHeight);
++                pw = (unsigned)((unsigned long long)ph * (unsigned)bm.bmWidth / (unsigned)bm.bmHeight);
+             else
+                 pw = fpx * 22u;
+-            W = list_w + pw + pad;
++            W = list_w + (unsigned)((pw + pad) * lv + 0.5);
++            if (lv <= 0.0 && !s_pic_want) {  /* faded out: gone */
++                pic_free();
++                s_pic_on = 0;
++                W = list_w;
++            }
++            s_pic_pw = pw;
++            s_pic_ph = ph;
++            s_pic_lv = lv;
+         }
+         s_list_w = list_w;
+     }
+ 
+     /* Redraw only when something shown moved. */
+     sig = (sig ^ fpx) * 16777619u;
+-    sig = (sig ^ s_pic_gen) * 16777619u;
++    sig = (sig ^ (unsigned)(s_pic_on ? s_pic_lv * 1000.0 + 1.0 : 0.0)) * 16777619u;
+     sig = (sig ^ (unsigned)s_sel) * 16777619u;
+     for (i = 0; i < s_n; i++)
+         sig = (sig ^ (unsigned)(s_items[i]->choices ? s_items[i]->get() + 1 : 0)) * 16777619u;
+@@ -747,20 +821,21 @@ const uint32_t *xbox_MenuPixels(unsigned back_h, unsigned *w, unsigned *h, unsig
+          TR("↑↓ elegir   ←→ cambiar   (se guarda solo)"), DT_LEFT, RGB(150, 140, 130));
+         W = W_all;
+     }
+-    if (s_pic_on) {
+-        int px0 = (int)s_list_w, ph = (int)(H - 2u * pad), pw2 = (int)W - px0 - (int)pad;
+-        if (s_pic) {
++    if (s_pic_on && s_pic_lv > 0.0) {
++        int px0 = (int)s_list_w, ph = (int)s_pic_ph, pw = (int)s_pic_pw;
++        int py = (int)pad + ((int)(H - 2u * pad) - ph) / 2;     /* centred beside the rows */
++        int vis = (int)W - px0;                                   /* the room opened so far */
++        HBITMAP sc = s_pic ? pic_scaled((unsigned)pw, (unsigned)ph) : NULL;
++        if (vis > pw) vis = pw;
++        if (sc && vis > 0) {
+             HDC m = CreateCompatibleDC(s_dc);
+-            BITMAP bm;
+-            GetObject(s_pic, sizeof bm, &bm);
+-            SelectObject(m, s_pic);
+-            SetStretchBltMode(s_dc, HALFTONE);
+-            SetBrushOrgEx(s_dc, 0, 0, NULL);
+-            StretchBlt(s_dc, px0, (int)pad, pw2, ph, m, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
++            BLENDFUNCTION bf = { AC_SRC_OVER, 0, (BYTE)(255.0 * s_pic_lv), 0 };
++            SelectObject(m, sc);
++            GdiAlphaBlend(s_dc, px0, py, vis, ph, m, 0, 0, vis, ph, bf);
+             DeleteDC(m);
+-        } else {
++        } else if (!s_pic && s_pic_lv > 0.6) {
+             SelectObject(s_dc, s_font);
+-            text(px0, (int)pad, pw2, ph, TR(s_pic_missing), DT_CENTER, RGB(225, 185, 120));
++            text(px0, py, pw, ph, TR(s_pic_missing), DT_CENTER, RGB(225, 185, 120));
+         }
+     }
+     GdiFlush();
+-- 
+2.55.0.windows.3
+
