@@ -11,6 +11,13 @@
 | ![Library and search](docs/img/biblioteca.jpg) | ![Opponents' decks](docs/img/mazos.jpg) |
 | ![Triple duel with rewards](docs/img/triple.jpg) | ![Egyptian gods](docs/img/dioses.jpg) |
 
+> [!IMPORTANT]
+> ## You need your own copy of the original Xbox game, European (PAL) version
+> ## Necesitás tu propia copia del juego de Xbox clásica, versión europea (PAL)
+> No game files are included. Other versions (USA, Japan) do not work.
+> No incluye archivos del juego. Otras versiones (EE. UU., Japón) no funcionan.
+> `default.xbe` = **7,254,016 bytes**.
+
 ### Downloads / Descargas
 
 | | |
