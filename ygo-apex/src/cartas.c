@@ -3502,8 +3502,8 @@ void sub_000D9720(void)
      * MEM32(MEM32(screen + 0x10) + 0x74) (0 = Obelisco, confirmed by the user) */
     {
         extern uint32_t ygo_ram(uint32_t a);
-        uint32_t o = ygo_ram(g_edi) ? MEM32(ygo_ram(g_edi) + 0x10u) : 0u;
-        uint32_t dios = ygo_ram(o) ? MEM32(ygo_ram(o) + 0x74u) : 99u;
+        uint32_t o = ygo_ram(g_edi + 0x10u) ? MEM32(g_edi + 0x10u) : 0u;
+        uint32_t dios = ygo_ram(o + 0x74u) ? MEM32(o + 0x74u) : 99u;
         fprintf(stderr, "[COFRE] dios elegido: grupo %u (pantalla %08X objeto %08X) (ranura %u de [PREMIOS])\n", dios, g_edi, o, dios);
         {
             extern void ygo_premios_dioses_hecho(uint32_t scr);

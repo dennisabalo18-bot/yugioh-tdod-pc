@@ -49,20 +49,33 @@ void ygo_premios_set(int i) { InterlockedExchange(&s_on, i == 0); }
 int ygo_quien_get(void);
 static int ayudas(void) { (void)s_on; return ygo_quien_get() != 2; }
 
-/* a guest pointer the port may read, as its address in the base 64 MB, 0
- * when it is none. 2026-11-25 (the user: no gods' sign after a tournament,
- * twice; [COFRE] dios elegido: grupo 99 with 0x80000000 already allowed):
- * the kit maps the 64 MB of RAM again every 64 MB up to the contiguous
- * window (xbox_memory_layout.c's mirrors, "covers 1856 MB") and at
- * 0x80000000; the game hands out pointers into those copies, so any of
- * them is read through the base copy (same pages, never a hole). */
-uint32_t ygo_ram(uint32_t a)
+/* a guest pointer the port may read: a itself when its bytes [a, a + n) are
+ * mapped and readable on this PC, else 0. 2026-11-25 (the user: no gods'
+ * sign after a tournament, three times): fixed ranges were wrong; the
+ * tournament's "Cual quieres?" screen lives at 0x74B3EB70 ([COFRE] dios
+ * elegido, 16:4x), past the 64 MB of RAM and its mirrors, and the game reads
+ * it there. So the host's own page table says what can be read. */
+static int host_legible(uintptr_t p)
 {
-    if (a < 0x10000u || a >= 0x88000000u)
+    MEMORY_BASIC_INFORMATION mi;
+    if (!VirtualQuery((LPCVOID)p, &mi, sizeof mi) || mi.State != MEM_COMMIT)
         return 0;
-    a &= 0x03FFFFFFu;
-    return a >= 0x10000u ? a : 0;
+    if (mi.Protect & (PAGE_NOACCESS | PAGE_GUARD))
+        return 0;
+    return (mi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ
+                          | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
 }
+
+uint32_t ygo_ram_n(uint32_t a, uint32_t n)
+{
+    if (a < 0x10000u || a > 0xFFFFFFFFu - n)
+        return 0;
+    if (!host_legible((uintptr_t)XBOX_PTR(a)) || !host_legible((uintptr_t)XBOX_PTR(a + n - 1u)))
+        return 0;
+    return a;
+}
+
+uint32_t ygo_ram(uint32_t a) { return ygo_ram_n(a, 4u); }
 
 static CRITICAL_SECTION s_cs;
 static int s_cs_ok;
@@ -287,7 +300,7 @@ static volatile uint32_t s_dios_hecho;  /* the reward object already given */
 void ygo_premios_dioses_hecho(uint32_t scr)
 {
     if (scr)
-        s_dios_hecho = ygo_ram(scr) ? ygo_ram(MEM32(ygo_ram(scr) + 0x1Cu)) : 0;
+        s_dios_hecho = ygo_ram_n(scr, 0x20u) ? MEM32(scr + 0x1Cu) : 0;
 }
 
 void ygo_premios_dioses_tick(uint32_t scr)
@@ -302,11 +315,10 @@ void ygo_premios_dioses_tick(uint32_t scr)
     visto = now;
     if (!ayudas() || !scr)
         return;
-    if (!ygo_ram(scr))
+    if (!ygo_ram_n(scr, 0x20u))
         return;
-    scr = ygo_ram(scr);
-    rew = ygo_ram(MEM32(scr + 0x1Cu));
-    o = ygo_ram(MEM32(scr + 0x10u));
+    rew = ygo_ram_n(MEM32(scr + 0x1Cu), 0x5Cu + 30u);
+    o = ygo_ram_n(MEM32(scr + 0x10u), 0x78u);
     /* (review) only pointers into the guest's RAM are read. 2026-11-25 (the
      * user: no sign at the tournament's gods): the low RAM alone rejected
      * the contiguous memory at 0x80000000 (the kit's XBOX_CONTIG_BASE) */
