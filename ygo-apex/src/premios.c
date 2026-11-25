@@ -49,6 +49,13 @@ void ygo_premios_set(int i) { InterlockedExchange(&s_on, i == 0); }
 int ygo_quien_get(void);
 static int ayudas(void) { (void)s_on; return ygo_quien_get() != 2; }
 
+/* a guest pointer the port may read: the low RAM (heap, image) or the
+ * contiguous memory the kit maps at 0x80000000 (128 MB at most) */
+int ygo_ram_ok(uint32_t a)
+{
+    return (a >= 0x10000u && a < 0x08000000u) || (a >= 0x80000000u && a < 0x88000000u);
+}
+
 static CRITICAL_SECTION s_cs;
 static int s_cs_ok;
 static ULONGLONG s_at;                  /* the last frame of the screen */
@@ -287,15 +294,31 @@ void ygo_premios_dioses_tick(uint32_t scr)
     visto = now;
     if (!ayudas() || !scr)
         return;
+    if (!ygo_ram_ok(scr))
+        return;
     rew = MEM32(scr + 0x1Cu);
     o = MEM32(scr + 0x10u);
-    /* (review) only pointers into the guest's RAM are read */
-    if (rew < 0x10000u || rew >= 0x08000000u || o < 0x10000u || o >= 0x08000000u || rew == s_dios_hecho)
+    /* (review) only pointers into the guest's RAM are read. 2026-11-25 (the
+     * user: no sign at the tournament's gods): the low RAM alone rejected
+     * the contiguous memory at 0x80000000 (the kit's XBOX_CONTIG_BASE) */
+    if (!ygo_ram_ok(rew) || !ygo_ram_ok(o) || rew == s_dios_hecho) {
+        static uint32_t dicho;
+        if (rew != s_dios_hecho && dicho != rew) {
+            dicho = rew;
+            fprintf(stderr, "[PREMIOS] dioses: sin cartel, pantalla %08X premio %08X objeto %08X\n", scr, rew, o);
+        }
         return;
+    }
     n = MEM32(rew + 0x3Cu);
     sel = (int)MEM32(o + 0x74u);
-    if (n < 1u || n > 5u || sel < 0 || sel > 2)
+    if (n < 1u || n > 5u || sel < 0 || sel > 2) {
+        static uint32_t dicho2;
+        if (dicho2 != rew) {
+            dicho2 = rew;
+            fprintf(stderr, "[PREMIOS] dioses: sin cartel, %u cartas, marcado %d\n", n, sel);
+        }
         return;
+    }
     for (g = 0; g < 3u; ++g) {
         uint16_t vistos[5];
         int nv = 0, j, dup;
