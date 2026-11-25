@@ -16,18 +16,18 @@
 | | |
 |---|---|
 | **Game port / Port del juego** (required / obligatorio) | [YuGiOh-TDOD-PC.zip — Releases](https://github.com/dennisabalo18-bot/yugioh-tdod-pc/releases/latest) |
-| **Content / Contenido** (required / obligatorio, 1.5 GB) | [YuGiOh-Contenido.zip — Google Drive](LINK_CONTENIDO) |
-| **Improved textures / Texturas mejoradas** (optional, 2.4 GB) | [YuGiOh-Texturas-HD.zip — Google Drive](LINK_HD) |
+| **Content / Contenido** (required / obligatorio, 1.5 GB) | [YuGiOh-Contenido.zip — Google Drive](https://drive.google.com/file/d/1YKa4AimO5mrgD42zyBa1MhnoOVCtRLm3/view?usp=sharing) |
+| **Improved textures / Texturas mejoradas** (optional, 2.4 GB) | [YuGiOh-Texturas-HD.zip — Google Drive](https://drive.google.com/file/d/10jcUGP3f-wSG7oDLrwOXYBmY-odlZ1s9/view?usp=sharing) |
 
 **Language textures / Texturas del idioma** (optional, only yours / opcional, solo el tuyo)
 
 | Language / Idioma | Download / Descarga | Size / Peso |
 |---|---|---:|
-| Español (+ Latin American voices / voces latinas) | [YuGiOh-Idioma-ES.zip — Google Drive](LINK_ES) | 606 MB |
-| English | [YuGiOh-Idioma-EN.zip — Google Drive](LINK_EN) | 526 MB |
-| Français | [YuGiOh-Idioma-FR.zip — Google Drive](LINK_FR) | 515 MB |
-| Deutsch | [YuGiOh-Idioma-DE.zip — Google Drive](LINK_DE) | 526 MB |
-| Italiano | [YuGiOh-Idioma-IT.zip — Google Drive](LINK_IT) | 515 MB |
+| Español (+ Latin American voices / voces latinas) | [YuGiOh-Idioma-ES.zip — Google Drive](https://drive.google.com/file/d/1O5RP8fcxO6wg85-Iwb_TSMpDt8XI9uKk/view?usp=sharing) | 606 MB |
+| English | [YuGiOh-Idioma-EN.zip — Google Drive](https://drive.google.com/file/d/1TuKMGDdU5d-IEkiAzIg1Htljv2hSWtDF/view?usp=sharing) | 526 MB |
+| Français | [YuGiOh-Idioma-FR.zip — Google Drive](https://drive.google.com/file/d/1cehcnNq6raPvGwtkMCYnekhNKheevQBB/view?usp=sharing) | 515 MB |
+| Deutsch | [YuGiOh-Idioma-DE.zip — Google Drive](https://drive.google.com/file/d/1HK0P1criXJkMOdjwTqDQZ6VPCDGx0Z6B/view?usp=sharing) | 526 MB |
+| Italiano | [YuGiOh-Idioma-IT.zip — Google Drive](https://drive.google.com/file/d/1ZzRb9ZNct9iCt_CMIzSaK_GdODMugJ1R/view?usp=sharing) | 515 MB |
 
 ---
 
