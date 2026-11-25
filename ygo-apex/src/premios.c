@@ -91,10 +91,10 @@ static int k_de(uint32_t id)
     return -1;
 }
 
-/* sub_0008C530(d): how many of the progress rows name d, minus 1, in 0..1 */
-static int variante(int d)
+/* sub_0008C530(d): how many of the progress rows name d, minus 1, in 0..1.
+ * n = the rows read (the tournament level in a tournament, else the story's) */
+static int variante_n(int d, uint32_t n)
 {
-    uint32_t n = MEM32(0x0066DCDCu) == 1u ? MEM32(0x0066DCDCu + 0x14u) : MEM32(0x00651958u + 0xACu);
     uint32_t i, j;
     int c = 0;
     if ((int32_t)n <= 0)
@@ -111,6 +111,11 @@ static int variante(int d)
         }
     c -= 1;
     return c < 0 ? 0 : c > 1 ? 1 : c;
+}
+
+static int variante(int d)
+{
+    return variante_n(d, MEM32(0x0066DCDCu) == 1u ? MEM32(0x0066DCDCu + 0x14u) : MEM32(0x00651958u + 0xACu));
 }
 
 int ygo_premios_variante(int d) { return variante(d); }   /* premios_extra.c */
@@ -193,22 +198,104 @@ void ygo_premios_tick(uint32_t scr)
  * The screen is sub_001057D0 (raton.c's wrapper calls this each frame): the
  * level +0x3E8 (0..14) and, per level, the battle order at +0x41C + 4 *
  * (3 * level + i) (the swap at 0x105D74 exchanges two; sub_001056D0 copies
- * it to the save), each an index into the level's three characters. A Triple duel's
- * rewards come from sub_0008C9B0 (the setup [0x66DCDC] != 0): the rival's own
- * list at 0x453FC8 + 16 d (both variants counted) and a list common to every
- * rival by level, not counted here (it is not that rival's). ---------------- */
+ * it to the save), each an index into the level's three characters.
+ * 2026-11-25 17:xx (the user: "si te da solo del nivel y no del rival la gente
+ * pensara que esta mal"; compact mock-up approved, "asegurate de que baje
+ * cuando ganes las cartas"): what the reward is really drawn from. Read in
+ * the code: sub_00025BC0 passes the LAST character of the Triple ([setup+4],
+ * d = s8 0x423D60[it]) to sub_0008C9B0; sub_001056D0 sets the tournament
+ * level [setup+0x14] = level + 1, and C9B0 takes the common list
+ * t = clamp((level + 1 - 1) / 3, 0, 4) at 0x453F78 + 16 t and the rival's
+ * at 0x453FC8 + 16 d, both in variant r = sub_0008C530(d) (variante_n).
+ * Each card of a reward is ONE pick from a bag of the entries that passed:
+ * an entry passes with max(5, (int)(weight * factor[min(copies, 3)])) %
+ * (factor f32 at 0x454358) if it has the slot's bit 1 << (15 - slot). So
+ * the rival's share of a card ~ the sum of its pass chances over both sums
+ * (averaged over the 3 gods' slots); with the port's filter on, cards at
+ * their limit never come (premios_extra.c) and are left out. The counts
+ * (both variants, like the rest of the port) are read from the chest every
+ * frame, so they go down as soon as a card is yours. ------------------------ */
 
 static ULONGLONG s_tri_at;
 static char s_tri_nom[3][64];
-static int s_tri_tot[3], s_tri_fal[3];
+static int s_tri_rtot, s_tri_rfal, s_tri_ctot, s_tri_cfal, s_tri_lvl, s_tri_pct;
 
 void ygo_nombre_personaje(int ch, char *out, int cap);   /* premios_extra.c */
+unsigned ygo_limite_carta(uint32_t id);                  /* cartas.c */
+int ygo_sin4_get(void);                                  /* premios_extra.c: 0 = the filter is on */
+
+/* the distinct cards of a list entry (both variants) with a weight and a slot
+ * bit, added to ids; returns the new count */
+static int juntar_ids(uint32_t ent, uint16_t *ids, int n, int cap)
+{
+    uint32_t r;
+    for (r = 0; r < 2u; ++r) {
+        uint32_t p = MEM32(ent + 4u * r), c = MEM16(ent + 8u + 2u * r), e;
+        if (!p || c > 512u)
+            continue;
+        for (e = 0; e < c; ++e) {
+            uint32_t id = MEM16(p + 4u * e), f = MEM16(p + 4u * e + 2u);
+            int j, dup = 0;
+            if (!(f & 0x1FFFu) || !(f & 0xE000u))
+                continue;
+            for (j = 0; j < n && !dup; ++j)
+                dup = ids[j] == id;
+            if (!dup && n < cap)
+                ids[n++] = (uint16_t)id;
+        }
+    }
+    return n;
+}
+
+/* how many of ids are not in the chest */
+static int sin_tener(const uint16_t *ids, int n)
+{
+    int j, f = 0;
+    for (j = 0; j < n; ++j) {
+        int k = k_de(ids[j]);
+        if (k <= 0 || !MEM8(COLECCION + (uint32_t)k))
+            ++f;
+    }
+    return f;
+}
+
+/* the sum of the pass chances (0..1 each) of one variant's list for a slot */
+static double suma_chances(uint32_t ent, int r, uint32_t bit, int filtro)
+{
+    uint32_t p = MEM32(ent + 4u * (uint32_t)r), c = MEM16(ent + 8u + 2u * (uint32_t)r), e;
+    double sum = 0;
+    if (!p || c > 512u)
+        return 0;
+    for (e = 0; e < c; ++e) {
+        uint32_t id = MEM16(p + 4u * e), f = MEM16(p + 4u * e + 2u), w = f & 0x1FFFu, cop;
+        int k, pc;
+        float fac;
+        if (!w || !(f & bit))
+            continue;
+        k = k_de(id);
+        cop = k > 0 ? MEM8(COLECCION + (uint32_t)k) : 0u;
+        if (filtro) {
+            unsigned l = ygo_limite_carta(id);
+            if (l > 3u)
+                l = 3u;
+            if (cop >= l)
+                continue;
+        }
+        memcpy(&fac, (const void *)XBOX_PTR(0x00454358u + 4u * (cop > 3u ? 3u : cop)), 4);
+        pc = (int)((double)w * (double)fac);
+        if (pc < 5)
+            pc = 5;
+        sum += pc >= 100 ? 1.0 : pc / 100.0;
+    }
+    return sum;
+}
 
 void ygo_premios_triple_tick(uint32_t scr)
 {
-    static int last[3] = { -1, -1, -1 }, last_f[3];
-    uint32_t lvl, i;
-    int chs[3], tot[3], fal[3], cambio = 0;
+    static int last_ch = -1, last_rf = -1, last_cf = -1, last_pct = -2;
+    uint32_t lvl, i, t, ent_c;
+    int chs[3], d, r = 0, rtot = 0, rfal = 0, ctot, cfal, n, pct = -1;
+    uint16_t ids[400];
     char nom[3][64];
     if (!ayudas() || !scr)
         return;
@@ -221,65 +308,67 @@ void ygo_premios_triple_tick(uint32_t scr)
          * character is the level's table at 0x455D50 + 8 * (3 * level + that)
          * (u32 character, u32 LP; read in sub_00103B70 / sub_00104EE0, which
          * name it with text 0x56 + character; 0x1B = a random one) */
-        uint32_t o = MEM32(scr + 0x41Cu + 4u * (3u * lvl + i)), ch, r;
-        int d, n = 0, j, e;
-        uint16_t ids[400];
+        uint32_t o = MEM32(scr + 0x41Cu + 4u * (3u * lvl + i)), ch;
         if (o > 2u)
             return;
         ch = MEM32(0x00455D50u + 8u * (3u * lvl + o));
         if (ch >= 40u)
             return;
         chs[i] = (int)ch;
-        d = (int)(int8_t)MEM8(0x00423D60u + ch);
-        tot[i] = fal[i] = 0;
         ygo_nombre_personaje((int)ch, nom[i], sizeof nom[i]);
         if (ch == 0x1Bu)                /* a random rival (the game shows "???") */
             snprintf(nom[i], sizeof nom[i], "???");
-        if (d < 0 || d >= 32)
-            continue;
-        for (r = 0; r < 2u; ++r) {
-            uint32_t p = MEM32(0x00453FC8u + 16u * (uint32_t)d + 4u * r);
-            uint32_t c = MEM16(0x00453FD0u + 16u * (uint32_t)d + 2u * r);
-            if (!p || c > 512u)
-                continue;
-            for (e = 0; e < (int)c; ++e) {
-                uint32_t id = MEM16(p + 4u * (uint32_t)e), f = MEM16(p + 4u * (uint32_t)e + 2u);
-                int dup = 0;
-                if (!(f & 0x1FFFu) || !(f & 0xE000u))
-                    continue;
-                for (j = 0; j < n && !dup; ++j)
-                    dup = ids[j] == id;
-                if (!dup && n < 400)
-                    ids[n++] = (uint16_t)id;
+    }
+    /* the common list of the tournament level */
+    t = lvl / 3u;
+    if (t > 4u)
+        t = 4u;
+    ent_c = 0x00453F78u + 16u * t;
+    n = juntar_ids(ent_c, ids, 0, 400);
+    ctot = n;
+    cfal = sin_tener(ids, n);
+    /* the last one fought gives the reward */
+    d = (int)(int8_t)MEM8(0x00423D60u + (uint32_t)chs[2]);
+    if (d >= 0 && d < 32) {
+        uint32_t ent_r = 0x00453FC8u + 16u * (uint32_t)d;
+        int filtro = ygo_sin4_get() == 0, sl, ns = 0;
+        double share = 0;
+        r = variante_n(d, lvl + 1u);
+        n = juntar_ids(ent_r, ids, 0, 400);
+        rtot = n;
+        rfal = sin_tener(ids, n);
+        for (sl = 0; sl < 3; ++sl) {
+            uint32_t bit = 1u << (15 - sl);
+            double er = suma_chances(ent_r, r, bit, filtro), ec = suma_chances(ent_c, r, bit, filtro);
+            if (er + ec > 0) {
+                share += er / (er + ec);
+                ++ns;
             }
         }
-        for (j = 0; j < n; ++j) {
-            int k = k_de(ids[j]);
-            ++tot[i];
-            if (k <= 0 || !MEM8(COLECCION + (uint32_t)k))
-                ++fal[i];
-        }
+        if (ns)
+            pct = (int)(100.0 * share / ns + 0.5);
     }
-    for (i = 0; i < 3u; ++i)
-        if (chs[i] != last[i] || fal[i] != last_f[i])
-            cambio = 1;
-    if (cambio) {
-        fprintf(stderr, "[PREMIOS] triple nivel %u: personajes %d %d %d, torneo %d/%d %d/%d %d/%d (faltan/total)\n", lvl,
-                chs[0], chs[1], chs[2], fal[0], tot[0], fal[1], tot[1], fal[2], tot[2]);
-        for (i = 0; i < 3u; ++i) {
-            last[i] = chs[i];
-            last_f[i] = fal[i];
-        }
+    if (chs[2] != last_ch || rfal != last_rf || cfal != last_cf || pct != last_pct) {
+        fprintf(stderr, "[PREMIOS] triple nivel %u: personajes %d %d %d; da premio el ultimo (duelista %d, variante %d)"
+                " faltan %d/%d; comunes t=%u faltan %d/%d; parte del rival %d por ciento\n", lvl, chs[0], chs[1],
+                chs[2], d, r, rfal, rtot, t, cfal, ctot, pct);
+        last_ch = chs[2];
+        last_rf = rfal;
+        last_cf = cfal;
+        last_pct = pct;
     }
     if (!s_cs_ok)
         return;
     EnterCriticalSection(&s_cs);
     s_tri_at = GetTickCount64();
-    for (i = 0; i < 3u; ++i) {
+    for (i = 0; i < 3u; ++i)
         snprintf(s_tri_nom[i], sizeof s_tri_nom[i], "%s", nom[i][0] ? nom[i] : "?");
-        s_tri_tot[i] = tot[i];
-        s_tri_fal[i] = fal[i];
-    }
+    s_tri_rtot = rtot;
+    s_tri_rfal = rfal;
+    s_tri_ctot = ctot;
+    s_tri_cfal = cfal;
+    s_tri_lvl = (int)lvl + 1;
+    s_tri_pct = pct;
     LeaveCriticalSection(&s_cs);
 }
 
@@ -385,10 +474,24 @@ static const char *const k_l2[6] = {
     "Te faltan: %d    Ya tienes: %d", "Missing: %d    You have: %d",
     "Faltam: %d    Você já tem: %d", "Manquantes : %d    Déjà obtenues : %d",
     "Fehlen: %d    Du hast: %d", "Mancano: %d    Ne hai già: %d" };
-static const char *const k_tri[6] = {
-    "Premios de torneo de estos rivales", "Tournament rewards from these opponents",
-    "Prêmios de torneio destes rivais", "Récompenses de tournoi de ces adversaires",
-    "Turnierbelohnungen dieser Gegner", "Premi del torneo di questi avversari" };
+/* 2026-11-25 17:xx: the Triple's compact sign (where the reward comes from) */
+static const char *const k_tri2[6] = {
+    "Premio de este torneo", "This tournament's reward", "Prêmio deste torneio", "Récompense de ce tournoi",
+    "Belohnung dieses Turniers", "Premio di questo torneo" };
+static const char *const k_comunes[6] = {
+    "Comunes nivel %d", "Common, level %d", "Comuns nível %d", "Communes niveau %d", "Allgemein, Stufe %d",
+    "Comuni livello %d" };
+static const char *const k_falta_de[6] = {
+    "Te faltan: %d de %d", "Missing: %d of %d", "Faltam: %d de %d", "Manquantes : %d sur %d", "Fehlen: %d von %d",
+    "Mancano: %d di %d" };
+static const char *const k_chance[6] = {
+    "~%d de 10", "~%d in 10", "~%d em 10", "~%d sur 10", "~%d von 10", "~%d su 10" };
+static const char *const k_menos1[6] = {
+    "menos de 1 de 10", "under 1 in 10", "menos de 1 em 10", "moins de 1 sur 10", "unter 1 von 10",
+    "meno di 1 su 10" };
+static const char *const k_sin_premio[6] = {
+    "%s y %s no dan premio", "%s and %s give no reward", "%s e %s não dão prêmio",
+    "%s et %s ne donnent rien", "%s und %s geben nichts", "%s e %s non danno premi" };
 static const char *const k_tri_nada[6] = {
     "No da cartas", "Gives no cards", "Não dá cartas", "Ne donne pas de cartes", "Gibt keine Karten",
     "Non dà carte" };
@@ -434,7 +537,7 @@ static DWORD WINAPI premios_thread(LPVOID unused)
         MSG m;
         HWND g = FindWindowA("RecompNv2aD3D11", NULL);
         ULONGLONG at, tat, dat;
-        int total, falta, want, tri, tt[3], tf[3], i3, dios, dn[3], dt[3], dsel;
+        int total, falta, want, tri, trt, trf, tct, tcf, tlv, tpc, i3, dios, dn[3], dt[3], dsel;
         char tn[3][64];
         RECT cr;
         POINT tl = { 0, 0 };
@@ -452,11 +555,14 @@ static DWORD WINAPI premios_thread(LPVOID unused)
             dn[i3] = s_dios_nue[i3];
             dt[i3] = s_dios_tot[i3];
         }
-        for (i3 = 0; i3 < 3; ++i3) {
+        for (i3 = 0; i3 < 3; ++i3)
             snprintf(tn[i3], sizeof tn[i3], "%s", s_tri_nom[i3]);
-            tt[i3] = s_tri_tot[i3];
-            tf[i3] = s_tri_fal[i3];
-        }
+        trt = s_tri_rtot;
+        trf = s_tri_rfal;
+        tct = s_tri_ctot;
+        tcf = s_tri_cfal;
+        tlv = s_tri_lvl;
+        tpc = s_tri_pct;
         LeaveCriticalSection(&s_cs);
         dios = GetTickCount64() - dat < 300u;                /* the gods' choice */
         tri = !dios && GetTickCount64() - tat < 300u && tat > at;     /* the Triple screen (the newer of the two) */
@@ -498,14 +604,32 @@ static DWORD WINAPI premios_thread(LPVOID unused)
                 }
                 nl = 4;
             } else if (tri) {
-                snprintf(l1, sizeof l1, "%s", k_tri[lang]);
-                for (j = 0; j < 3; ++j) {
-                    snprintf(fil[j][0], sizeof fil[j][0], "%s", tn[j]);
-                    if (tt[j])
-                        snprintf(fil[j][1], sizeof fil[j][1], k_l2[lang], tf[j], tt[j] - tf[j]);
+                /* 2026-11-25 17:xx (compact mock-up): where the reward comes
+                 * from: the level's common cards, the last rival (gold) with
+                 * the share of each card (~N in 10), and the other two */
+                char ch_c[64] = "", ch_r[64] = "";
+                if (tpc >= 0) {
+                    int r10 = (tpc + 5) / 10;
+                    if (tpc > 0 && r10 == 0)
+                        snprintf(ch_r, sizeof ch_r, "%s", k_menos1[lang]);
                     else
-                        snprintf(fil[j][1], sizeof fil[j][1], "%s", k_tri_nada[lang]);
+                        snprintf(ch_r, sizeof ch_r, k_chance[lang], r10);
+                    snprintf(ch_c, sizeof ch_c, k_chance[lang], 10 - r10);
                 }
+                snprintf(l1, sizeof l1, "%s", k_tri2[lang]);
+                snprintf(fil[0][0], sizeof fil[0][0], k_comunes[lang], tlv);
+                snprintf(fil[0][1], sizeof fil[0][1], k_falta_de[lang], tcf, tct);
+                if (ch_c[0])
+                    snprintf(fil[0][1] + strlen(fil[0][1]), sizeof fil[0][1] - strlen(fil[0][1]), "   %s", ch_c);
+                snprintf(fil[1][0], sizeof fil[1][0], "%s", tn[2]);
+                if (trt) {
+                    snprintf(fil[1][1], sizeof fil[1][1], k_falta_de[lang], trf, trt);
+                    if (ch_r[0])
+                        snprintf(fil[1][1] + strlen(fil[1][1]), sizeof fil[1][1] - strlen(fil[1][1]), "   %s", ch_r);
+                } else
+                    snprintf(fil[1][1], sizeof fil[1][1], "%s", k_tri_nada[lang]);
+                oro[1] = 1;
+                snprintf(fil[2][0], sizeof fil[2][0], k_sin_premio[lang], tn[0], tn[1]);
                 nl = 4;
             } else if (total) {
                 snprintf(l1, sizeof l1, k_l1[lang], total);
