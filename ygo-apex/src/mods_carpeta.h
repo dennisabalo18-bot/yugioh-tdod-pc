@@ -9,4 +9,6 @@
 #include <wchar.h>
 const char *ygo_mods_a(void);
 const wchar_t *ygo_mods_w(void);
+/* Mods-Extras folders unpacked one level too deep, merged into root\Mods-Extras */
+void ygo_mods_acomodar(const char *root);
 #endif

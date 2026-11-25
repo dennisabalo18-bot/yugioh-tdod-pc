@@ -15,18 +15,25 @@ QUÉ BAJAR
                                   (o -EN, -FR, -DE, -IT)   (solo el que vayas a usar);
                                                            el de español trae las voces
                                                            en español latino
-  Los zip de Drive se descomprimen TAL CUAL dentro de la carpeta del port (la que tiene
-  Yu-Gi-Oh.exe): cada uno ya trae su lugar (Mods-Extras\...).
-
-CÓMO INSTALAR
-1. Descomprimí YuGiOh-TDOD-PC.zip donde quieras.
-2. Poné tu juego de Xbox (versión europea) en la carpeta Game:
+CÓMO INSTALAR (paso a paso)
+1. Descomprimí YuGiOh-TDOD-PC.zip donde quieras (por ejemplo en el Escritorio).
+   Te queda la carpeta "Yu-Gi-Oh Port": esa es la carpeta del port.
+2. Poné tu juego de Xbox (versión europea) en la carpeta "Yu-Gi-Oh Port\Game":
      - si tenés la ISO, arrastrala sobre "Instalar juego desde ISO.bat";
      - si ya está descomprimido, copiá sus archivos dentro de Game
        (tiene que quedar default.xbe dentro de Game o de una carpeta adentro de Game).
-3. Descomprimí YuGiOh-Contenido.zip (y los opcionales que quieras) en la carpeta del port.
+3. Descomprimí cada zip de Drive (YuGiOh-Contenido.zip y los opcionales) ADENTRO de la
+   carpeta "Yu-Gi-Oh Port". Con "Extraer todo" de Windows: tocá Examinar y elegí esa
+   carpeta. Si igual te queda una carpeta con el nombre del zip, no pasa nada: el juego
+   y Configuración la acomodan solos en Mods-Extras al abrirse.
+   Después podés borrar los .zip.
 4. Abrí Configuración.exe, elegí los ajustes y tocá JUGAR.
    (También podés abrir Yu-Gi-Oh.exe directo.)
+
+PARA ACTUALIZAR
+  Abrí Configuración.exe y tocá "Buscar actualizaciones": baja la versión nueva de GitHub
+  y la instala sola. Tus ajustes, partidas, juego y lo de Drive no se tocan.
+  Los zip de Drive no hace falta volver a bajarlos salvo que una versión lo pida.
 
 En el juego:  F2 menú de ajustes   F6 texturas mejoradas sí/no   F7 pausa
               F11 pantalla completa

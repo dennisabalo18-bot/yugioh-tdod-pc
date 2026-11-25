@@ -47,7 +47,56 @@ static class Program
         try { SetProcessDPIAware(); } catch { }
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        Acomodar(AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\'));
         Application.Run(new Launcher());
+    }
+
+    // 2026-11-25: the Drive zips unpacked with Windows' "Extraer todo" land in
+    // a folder named after the zip (root\YuGiOh-Contenido\Mods-Extras\...), or
+    // in Mods-Extras\Mods-Extras\...: merged into root\Mods-Extras, like the
+    // game does (mods_carpeta.c ygo_mods_acomodar).
+    static void Acomodar(string root)
+    {
+        try {
+            string mods = Path.Combine(root, "Mods-Extras");
+            var halla = new List<string>();
+            Buscar(root, mods, 0, halla);
+            foreach (var h in halla) {
+                Juntar(h, mods);
+                for (var p = h; p.Length > root.Length && !string.Equals(p, mods, StringComparison.OrdinalIgnoreCase);
+                     p = Path.GetDirectoryName(p)) {
+                    if (Directory.EnumerateFileSystemEntries(p).Any()) break;
+                    Directory.Delete(p);
+                }
+            }
+        } catch { }
+    }
+
+    static void Buscar(string dir, string mods, int prof, List<string> halla)
+    {
+        foreach (var d in Directory.GetDirectories(dir)) {
+            var n = Path.GetFileName(d);
+            if (prof == 0 && (n.Equals("Game", StringComparison.OrdinalIgnoreCase) || n.Equals("Partidas", StringComparison.OrdinalIgnoreCase)
+                              || n.Equals("Ajustes", StringComparison.OrdinalIgnoreCase)))
+                continue;
+            if (n.Equals("Mods-Extras", StringComparison.OrdinalIgnoreCase) && !string.Equals(d, mods, StringComparison.OrdinalIgnoreCase))
+                halla.Add(d);
+            else if (prof < 2)
+                Buscar(d, mods, prof + 1, halla);
+        }
+    }
+
+    static void Juntar(string src, string dst)
+    {
+        Directory.CreateDirectory(dst);
+        foreach (var f in Directory.GetFiles(src)) {
+            var to = Path.Combine(dst, Path.GetFileName(f));
+            try { if (File.Exists(to)) File.Delete(to); File.Move(f, to); } catch { }
+        }
+        foreach (var d in Directory.GetDirectories(src)) {
+            Juntar(d, Path.Combine(dst, Path.GetFileName(d)));
+            try { if (!Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d); } catch { }
+        }
     }
 }
 

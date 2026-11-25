@@ -88,9 +88,15 @@ Yu-Gi-Oh Port\
    `Instalar juego desde ISO.bat`, or copy the already extracted files there
    (a folder inside it is fine).
 3. Download `YuGiOh-Contenido.zip` (and the optional ones you want) and unzip
-   them **as they are into the port folder** (the one with `Yu-Gi-Oh.exe`):
-   they already bring their `Mods-Extras\...` folders.
+   each one **into the `Yu-Gi-Oh Port` folder** (the one with `Yu-Gi-Oh.exe`;
+   with Windows' "Extract All", press Browse and pick that folder). If a folder
+   named after the zip is created anyway, the game and Configuración move it
+   into `Mods-Extras` by themselves.
 4. Open `Configuración.exe`, choose your settings and press **JUGAR**.
+
+**Updating:** in `Configuración.exe` press **Buscar actualizaciones**. It
+downloads the new version from GitHub and installs it; your settings, saves,
+game and Drive downloads are kept.
 
 In game: **F2** settings · **F6** improved textures on/off · **F7** pause ·
 **F11** fullscreen. Mouse: left click chooses, right click goes back, the wheel
@@ -184,10 +190,16 @@ Yu-Gi-Oh Port\
 2. Poné tu juego (versión europea) en `Game\`: arrastrá tu ISO de Xbox sobre
    `Instalar juego desde ISO.bat`, o copiá ahí los archivos ya descomprimidos
    (puede ir dentro de otra carpeta).
-3. Bajá `YuGiOh-Contenido.zip` (y los opcionales que quieras) y descomprimilos
-   **tal cual en la carpeta del port** (la que tiene `Yu-Gi-Oh.exe`): ya traen
-   sus carpetas `Mods-Extras\...`.
+3. Bajá `YuGiOh-Contenido.zip` (y los opcionales que quieras) y descomprimí
+   cada uno **adentro de la carpeta `Yu-Gi-Oh Port`** (la que tiene
+   `Yu-Gi-Oh.exe`; con "Extraer todo" de Windows, tocá Examinar y elegí esa
+   carpeta). Si igual se crea una carpeta con el nombre del zip, el juego y
+   Configuración la pasan solos a `Mods-Extras`.
 4. Abrí `Configuración.exe`, elegí los ajustes y tocá **JUGAR**.
+
+**Para actualizar:** en `Configuración.exe` tocá **Buscar actualizaciones**.
+Baja la versión nueva de GitHub y la instala; tus ajustes, partidas, juego y
+lo bajado de Drive se mantienen.
 
 En el juego: **F2** ajustes · **F6** texturas mejoradas sí/no · **F7** pausa ·
 **F11** pantalla completa. Mouse: clic izquierdo elige, clic derecho vuelve, la

@@ -18,7 +18,8 @@
 #
 # Nunca va en el zip: el juego, ygo_menu.ini (ajustes del que lo arma), registros ni volcados.
 # El zip trae ygo_menu.default.ini: el exe lo copia la primera vez y después vale Ajustes\.
-param([string]$Completo = "", [string]$Extras = "C:\Emuladores y Juegos\Yu-Gi-Oh Port\Mods-Extras")
+# -SinDrive: solo el zip del programa (los de Drive ya subidos no cambian).
+param([string]$Completo = "", [string]$Extras = "C:\Emuladores y Juegos\Yu-Gi-Oh Port\Mods-Extras", [switch]$SinDrive)
 
 $ErrorActionPreference = "Stop"
 $port = Split-Path -Parent $PSScriptRoot
@@ -82,8 +83,10 @@ Zip $prog $zip
 "{0}: {1:N1} MB" -f $zip, ((Get-Item $zip).Length / 1MB)
 # lo de Google Drive (2026-11-25): Contenido (obligatorio), texturas HD, un idioma por zip, voces
 $drive = Join-Path $dist "drive"
-& py -3 -I (Join-Path $PSScriptRoot "zip_drive.py") $Extras $drive
-if ($LASTEXITCODE) { throw "no se pudieron armar los zip de Drive" }
+if (-not $SinDrive) {
+    & py -3 -I (Join-Path $PSScriptRoot "zip_drive.py") $Extras $drive
+    if ($LASTEXITCODE) { throw "no se pudieron armar los zip de Drive" }
+}
 
 # ---- la carpeta completa para jugar ----
 if ($Completo) {

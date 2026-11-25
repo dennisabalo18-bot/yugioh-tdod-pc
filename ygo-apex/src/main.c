@@ -2407,6 +2407,10 @@ static void portable_defaults(void)
     set_default("RECOMP_GAME_FILES", game);
     for (i = 0; i < sizeof env / sizeof env[0]; i++)
         set_default(env[i][0], env[i][1]);
+    {   /* 2026-11-25: zips unpacked into a folder named after them (mods_carpeta.c) */
+        extern void ygo_mods_acomodar(const char *root);
+        ygo_mods_acomodar(root);
+    }
     snprintf(p, sizeof p, "%s\\Mods-Extras", root);
     CreateDirectoryA(p, NULL);
     set_default("RECOMP_MODS_DIR", p);
