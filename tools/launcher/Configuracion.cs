@@ -392,15 +392,15 @@ static class Tr
             "Pendant que l'adversaire joue, le jeu va x2 ou x4. Retour à la normale quand vous devez répondre.",
             "Während der Gegner spielt, läuft das Spiel x2 oder x4. Normal, sobald du antworten musst.",
             "Mentre gioca l'avversario, il gioco va x2 o x4. Torna normale quando tocca a te rispondere." } },
-        { "cartas_nuevas", new[] { "Cartas nuevas", "New cards", "Cartas novas",
-            "Nouvelles cartes", "Neue Karten", "Carte nuove" } },
+        { "cartas_nuevas", new[] { "Cartas agregadas", "Added cards", "Cartas adicionadas",
+            "Cartes ajoutées", "Hinzugefügte Karten", "Carte aggiunte" } },
         { "cartas_nuevas.tip", new[] {
-            "Las cartas del mod de cartas (carpeta cartas en Mods-Extras). Con No, el juego queda como el original. Se aplica al reiniciar.",
-            "The card mod's cards (cartas folder in Mods-Extras). With No, the game stays as the original. Applied on restart.",
-            "As cartas do mod de cartas (pasta cartas em Mods-Extras). Com Não, o jogo fica como o original. Aplica-se ao reiniciar.",
-            "Les cartes du mod de cartes (dossier cartas dans Mods-Extras). Avec Non, le jeu reste l'original. Appliqué au redémarrage.",
-            "Die Karten des Karten-Mods (Ordner cartas in Mods-Extras). Mit Nein bleibt das Spiel original. Gilt nach Neustart.",
-            "Le carte del mod di carte (cartella cartas in Mods-Extras). Con No, il gioco resta l'originale. Si applica al riavvio." } },
+            "Las cartas que el port agrega al juego (YuGiOh-Contenido). Con No, el juego queda con sus cartas originales. Se aplica al reiniciar.",
+            "The cards the port adds to the game (YuGiOh-Contenido). With No, the game keeps only its original cards. Applied on restart.",
+            "As cartas que o port adiciona ao jogo (YuGiOh-Contenido). Com Não, o jogo fica só com as cartas originais. Aplica-se ao reiniciar.",
+            "Les cartes que le port ajoute au jeu (YuGiOh-Contenido). Avec Non, le jeu garde seulement ses cartes d'origine. Appliqué au redémarrage.",
+            "Die Karten, die der Port dem Spiel hinzufügt (YuGiOh-Contenido). Mit Nein behält das Spiel nur seine Originalkarten. Gilt nach Neustart.",
+            "Le carte che il port aggiunge al gioco (YuGiOh-Contenido). Con No, il gioco tiene solo le sue carte originali. Si applica al riavvio." } },
         { "tex_dump", new[] { "Volcar texturas a carpeta", "Dump textures to folder", "Exportar texturas para pasta",
             "Exporter les textures", "Texturen in Ordner speichern", "Esporta texture in cartella" } },
         { "tex_dump.tip", new[] {
@@ -929,6 +929,7 @@ class Launcher : Form
             // funda_marco, tapete, tapete_efecto and cartas_nuevas hidden here (the user); the
             // ini keeps them (Save writes only these keys), the game and the Perfil set them
             new Opt("ayudas", "Sí, con fotos", "Sí, con fotos", "Sí, sin fotos", "No"),   // 2026-11-25: Ayudas
+            new Opt("cartas_nuevas", "Sí", "Sí", "No"),   // 2026-11-26: shown again as "Cartas agregadas" (the user)
         }));
         try { Directory.CreateDirectory(AjustesDir); } catch { }
         MoveOldIni();

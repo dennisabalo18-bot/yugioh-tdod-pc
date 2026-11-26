@@ -1979,7 +1979,7 @@ extern int ygo_cartas_get(void);
 extern void ygo_cartas_set(int i);
 static const char *const k_cartas[] = { "Sí", "No", NULL };
 static const xbox_menu_item k_cartas_rows[] = {
-    { "cartas_nuevas", "Cartas nuevas (al reiniciar)", k_cartas, ygo_cartas_get, ygo_cartas_set },
+    { "cartas_nuevas", "Cartas agregadas (al reiniciar)", k_cartas, ygo_cartas_get, ygo_cartas_set },
 };
 
 static void fast_menu_init(void)
@@ -2039,7 +2039,7 @@ static void fast_menu_init(void)
     {
         const char *c = getenv("YGO_CARTAS");
         if (c && *c)
-            xbox_MenuAddHidden(&k_cartas_rows[0]);   /* 2026-11-20: hidden (the user) */
+            xbox_MenuAdd(&k_cartas_rows[0]);   /* 2026-11-26: shown again, "Cartas agregadas" (the user) */
     }
     xbox_MenuAdd(&k_quit_rows[0]);
     xbox_MenuAdd(&k_quit_rows[1]);
